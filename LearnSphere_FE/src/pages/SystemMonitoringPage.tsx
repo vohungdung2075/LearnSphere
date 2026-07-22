@@ -39,7 +39,7 @@ type MetricCardProps = {
 
 function MetricCard({ icon, label, value, detail, tone }: MetricCardProps) {
   return (
-    <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5 shadow-lg shadow-black/10">
+    <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${tone}`}>
           <span className="material-symbols-outlined text-[25px]">{icon}</span>
@@ -113,12 +113,12 @@ export function SystemMonitoringPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/system-monitoring" items={navItems} user={user} />
 
       <main className="min-h-screen pb-16 md:pl-64">
-        <div className="mx-auto max-w-7xl space-y-7 p-4 md:p-8">
+        <div className="mx-auto max-w-[1180px] space-y-5 p-4 md:p-6">
           <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#24dfba]">Admin control center</p>
@@ -128,7 +128,7 @@ export function SystemMonitoringPage() {
               </p>
             </div>
             <button
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#414754] bg-[#161c28] px-4 py-3 font-mono text-[12px] text-[#c1c6d7] transition-colors hover:border-[#adc7ff]/60 hover:text-[#adc7ff] disabled:cursor-wait disabled:opacity-60"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#354055] bg-[#111827]/92 px-4 py-3 font-mono text-[12px] text-[#c1c6d7] shadow-xl shadow-black/20 transition-colors hover:border-[#adc7ff]/60 hover:text-[#adc7ff] disabled:cursor-wait disabled:opacity-60"
               type="button"
               disabled={isLoading}
               onClick={() => void loadStats()}
@@ -157,7 +157,7 @@ export function SystemMonitoringPage() {
               </section>
 
               <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
-                <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5 md:p-6 xl:col-span-2">
+                <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-6 xl:col-span-2">
                   <div className="mb-7 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                       <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Traffic analytics</p>
@@ -190,7 +190,7 @@ export function SystemMonitoringPage() {
                   </div>
                 </article>
 
-                <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5 md:p-6">
+                <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-6">
                   <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Amazon S3</p>
                   <h2 className="mt-2 text-[22px] font-semibold">Dung lượng lưu trữ</h2>
                   <div className="mt-8 flex justify-center">
@@ -211,7 +211,7 @@ export function SystemMonitoringPage() {
               </section>
 
               <section className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-                <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5">
+                <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                   <h2 className="text-[18px] font-semibold">Tài khoản theo vai trò</h2>
                   <div className="mt-5 space-y-4">
                     {[
@@ -231,7 +231,7 @@ export function SystemMonitoringPage() {
                   </div>
                 </article>
 
-                <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5">
+                <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                   <h2 className="text-[18px] font-semibold">Enrollment</h2>
                   <div className="mt-5 grid grid-cols-2 gap-3">
                     <div className="rounded-xl bg-[#24dfba]/10 p-4"><p className="font-mono text-[10px] uppercase text-[#24dfba]">Đang học</p><strong className="mt-2 block text-[28px]">{formatNumber(stats.content.enrollments.active)}</strong></div>
@@ -240,7 +240,7 @@ export function SystemMonitoringPage() {
                   <div className="mt-4 flex justify-between border-t border-[#414754] pt-4 text-[13px]"><span className="text-[#8b90a0]">Course đã xóa mềm</span><strong>{formatNumber(stats.content.deleted_courses)}</strong></div>
                 </article>
 
-                <article className="rounded-2xl border border-white/5 bg-[#161c28] p-5">
+                <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                   <h2 className="text-[18px] font-semibold">Quiz attempt</h2>
                   <dl className="mt-5 space-y-3 text-[13px]">
                     <div className="flex items-center justify-between rounded-lg bg-[#adc7ff]/5 px-4 py-3"><dt className="text-[#c1c6d7]">Đang làm</dt><dd className="font-semibold text-[#adc7ff]">{formatNumber(stats.content.quiz_attempts.in_progress)}</dd></div>

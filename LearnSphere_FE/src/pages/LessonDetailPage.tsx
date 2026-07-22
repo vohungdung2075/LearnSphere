@@ -71,19 +71,19 @@ export function LessonDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4] selection:bg-[#adc7ff]/30">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/courses" user={user} />
 
-      <main className="mx-auto grid min-h-screen max-w-7xl grid-cols-1 gap-6 px-4 pb-16 pt-8 md:pl-72 md:pr-8 lg:grid-cols-12">
-        <aside className="space-y-4 lg:col-span-4">
-          <section className="rounded-xl border border-white/5 bg-[#161c28] p-6">
+      <main className="mx-auto flex min-h-screen max-w-[1180px] flex-col gap-5 px-4 pb-16 pt-6 md:flex-row md:items-start md:pl-64 md:pr-6">
+        <aside className="w-full shrink-0 space-y-5 md:sticky md:top-24 md:w-[330px] xl:w-[360px]">
+          <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
             <h1 className="mb-2 text-[24px] font-semibold text-[#dde2f4]">Bài học</h1>
           </section>
 
-          <section className="rounded-xl border border-white/5 bg-[#161c28] p-6">
+          <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="font-mono text-[13px] uppercase tracking-wider text-[#8b90a0]">Danh sách bài học</h2>
               <span className="font-mono text-[12px] text-[#adc7ff]">{lessons.length}</span>
@@ -113,7 +113,7 @@ export function LessonDetailPage() {
           </section>
 
           {progress && (
-            <section className="rounded-xl border border-white/5 bg-[#161c28] p-6">
+            <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="font-mono text-[13px] uppercase tracking-wider text-[#8b90a0]">Tiến độ khóa học</h2>
                 <span className="text-[24px] font-bold text-[#24dfba]">{progress.progress_percent}%</span>
@@ -128,16 +128,16 @@ export function LessonDetailPage() {
           )}
         </aside>
 
-        <section className="space-y-6 lg:col-span-8">
+        <section className="min-w-0 flex-1 space-y-5">
           {!lesson && !isLoading && (
-            <div className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
+            <div className="rounded-2xl border border-dashed border-[#354055] bg-[#111827]/92 p-10 text-center shadow-xl shadow-black/20">
               <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">auto_stories</span>
               <h2 className="text-[22px] font-semibold text-[#dde2f4]">Chưa có dữ liệu bài học</h2>
             </div>
           )}
 
           {lesson && (
-            <article className="rounded-xl border border-white/5 bg-[#161c28] p-6 md:p-8">
+            <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-7">
               <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="mb-2 font-mono text-[12px] uppercase tracking-wider text-[#8b90a0]">Bài học #{lesson.order_index}</p>

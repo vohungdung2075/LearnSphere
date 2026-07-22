@@ -191,14 +191,14 @@ export function ProfilePage() {
   const displayedAvatar = avatarPreview || avatarUrl;
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={displayedAvatar || fallbackAvatarSrc} />
       <RoleSidebar activePath="/profile" user={user} />
       <AppToast message={message} tone={isError ? 'error' : 'success'} onClose={() => setMessage('')} />
 
-      <main className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-8 md:pl-72 md:pr-8 lg:grid-cols-12">
+      <main className="mx-auto grid max-w-[1180px] grid-cols-1 gap-5 px-4 py-6 md:pl-64 md:pr-6 lg:grid-cols-12">
         <aside className="lg:col-span-4">
-          <section className="overflow-hidden rounded-2xl border border-white/5 bg-[#161c28]">
+          <section className="overflow-hidden rounded-2xl border border-[#253047] bg-[#111827]/92 shadow-xl shadow-black/20">
             <div className="h-28 bg-[linear-gradient(135deg,#adc7ff_0%,#24dfba_52%,#ffc080_100%)] opacity-90" />
             <div className="px-6 pb-6">
               <div className="relative z-10 -mt-16 mb-5 flex h-28 w-28 items-center justify-center overflow-hidden rounded-2xl border-4 border-[#161c28] bg-[#0d131f] text-[28px] font-bold text-[#adc7ff] shadow-xl">
@@ -224,7 +224,7 @@ export function ProfilePage() {
               { icon: 'badge', label: 'Vai trò', value: getRoleLabel(user?.role), tone: 'text-[#adc7ff]' },
               { icon: 'event', label: 'Ngày tham gia', value: formatDate(user?.created_at), tone: 'text-[#ffc080]' },
             ].map((item) => (
-              <article key={item.label} className="rounded-xl border border-white/5 bg-[#161c28] p-5">
+              <article key={item.label} className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                 <span className={`material-symbols-outlined mb-3 text-[28px] ${item.tone}`}>{item.icon}</span>
                 <p className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">{item.label}</p>
                 <p className="mt-1 text-[17px] font-semibold">{item.value}</p>
@@ -232,7 +232,7 @@ export function ProfilePage() {
             ))}
           </div>
 
-          <form className="rounded-2xl border border-white/5 bg-[#161c28] p-6 md:p-8" onSubmit={handleSubmit}>
+          <form className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-7" onSubmit={handleSubmit}>
             <div className="mb-7">
               <h2 className="text-[24px] font-semibold">Chỉnh sửa hồ sơ</h2>
               <p className="mt-2 text-[14px] text-[#8b90a0]">Cập nhật tên hiển thị và ảnh đại diện của tài khoản.</p>
@@ -242,7 +242,7 @@ export function ProfilePage() {
             <div className="space-y-6">
               <div>
                 <p className="mb-3 font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Ảnh đại diện</p>
-                <div className="flex flex-col gap-4 rounded-xl border border-[#414754] bg-[#0d131f]/60 p-4 sm:flex-row sm:items-center">
+                <div className="flex flex-col gap-4 rounded-xl border border-[#354055] bg-[#070d19] p-4 sm:flex-row sm:items-center">
                   <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-[#242a37] font-bold text-[#adc7ff]">
                     {displayedAvatar ? <img className="h-full w-full object-cover" src={displayedAvatar} alt="Xem trước avatar" /> : initials}
                   </div>
@@ -261,12 +261,12 @@ export function ProfilePage() {
 
               <label className="block space-y-2">
                 <span className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Họ và tên</span>
-                <input className="w-full rounded-lg border border-[#414754] bg-[#0d131f] px-4 py-3 outline-none focus:border-[#adc7ff] focus:ring-2 focus:ring-[#adc7ff]/20" value={fullName} minLength={2} maxLength={100} required onChange={(event) => setFullName(event.target.value)} />
+                <input className="w-full rounded-xl border border-[#354055] bg-[#070d19] px-4 py-3 outline-none focus:border-[#8fb7ff] focus:ring-2 focus:ring-[#8fb7ff]/20" value={fullName} minLength={2} maxLength={100} required onChange={(event) => setFullName(event.target.value)} />
               </label>
 
               <label className="block space-y-2">
                 <span className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Email</span>
-                <input className="w-full rounded-lg border border-[#414754] bg-[#0d131f] px-4 py-3 text-[#8b90a0]" value={user?.email ?? ''} readOnly />
+                <input className="w-full rounded-xl border border-[#354055] bg-[#070d19] px-4 py-3 text-[#8b90a0]" value={user?.email ?? ''} readOnly />
               </label>
 
               <div className="flex justify-end border-t border-[#414754] pt-6">

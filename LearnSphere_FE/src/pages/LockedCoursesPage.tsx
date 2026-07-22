@@ -71,13 +71,13 @@ export function LockedCoursesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/locked-courses" items={navItems} user={user} />
       <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 md:pl-72 md:pr-8">
-        <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      <main className="mx-auto max-w-[1180px] space-y-5 px-4 py-6 md:pl-64 md:pr-6">
+        <section className="flex flex-col justify-between gap-4 rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:flex-row md:items-end">
           <div>
             <p className="mb-2 font-mono text-[12px] uppercase tracking-wider text-[#8b90a0]">{getRoleLabel(user?.role)}</p>
             <h1 className="text-[32px] font-semibold">Khóa học bị khóa</h1>
@@ -85,7 +85,7 @@ export function LockedCoursesPage() {
               Đây là danh sách khóa học đang ở trạng thái xóa mềm. Admin có thể mở khóa; giảng viên thấy các khóa của mình để theo dõi trạng thái.
             </p>
           </div>
-          <span className="rounded-lg border border-white/5 bg-[#161c28] px-4 py-2 font-mono text-[12px] text-[#8b90a0]">
+          <span className="rounded-xl border border-[#354055] bg-[#070d19] px-4 py-2 font-mono text-[12px] text-[#8b90a0]">
             {courses.length} khóa học
           </span>
         </section>
@@ -97,7 +97,7 @@ export function LockedCoursesPage() {
         )}
 
         {!isLoading && !courses.length ? (
-          <section className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
+          <section className="rounded-2xl border border-dashed border-[#354055] bg-[#111827]/92 p-10 text-center shadow-xl shadow-black/20">
             <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">lock_open</span>
             <h2 className="text-[22px] font-semibold">Không có khóa học bị khóa</h2>
             <p className="mt-2 text-[#c1c6d7]">Khi có khóa học bị tạm khóa hoặc xóa mềm, khóa học sẽ xuất hiện ở đây.</p>
@@ -107,7 +107,7 @@ export function LockedCoursesPage() {
             {courses.map((course) => {
               const creator = typeof course.created_by === 'object' ? course.created_by.full_name : 'Chưa rõ';
               return (
-                <article key={course._id} className="rounded-xl border border-white/5 bg-[#161c28] p-5">
+                <article key={course._id} className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h2 className="text-[22px] font-semibold">{course.title}</h2>

@@ -72,6 +72,40 @@ select {
   .student-media-card p.break-all {
     display: none;
   }
+
+  .quiz-card-status > span:nth-child(2) {
+    display: none;
+  }
+
+  .quiz-library-panel > div:first-child h2:not(.hidden) {
+    margin-top: 1rem;
+    font-size: 2rem;
+    line-height: 1.15;
+  }
+
+  .quiz-library-panel > div:first-child p {
+    margin-top: 0.5rem;
+    font-size: 1rem;
+    line-height: 1.75;
+    color: #aeb9d2;
+  }
+
+  .quiz-library-panel article h3 {
+    font-size: 1.625rem;
+    line-height: 1.2;
+  }
+
+  .quiz-library-panel article .grid.grid-cols-2 > div {
+    padding: 0.75rem 1rem;
+  }
+
+  .quiz-library-panel article .grid.grid-cols-2 .material-symbols-outlined {
+    font-size: 1.25rem;
+  }
+
+  .quiz-library-panel article .grid.grid-cols-2 span:last-child {
+    font-size: 0.8125rem;
+  }
 }
 
 @keyframes aiPulse {

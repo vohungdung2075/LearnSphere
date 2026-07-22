@@ -21,6 +21,9 @@ function formatTime(totalSeconds: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
+type QuizStatusFilter = 'all' | 'completed' | 'not_started';
+type DifficultyFilter = 'all' | 'basic' | 'medium' | 'advanced';
+
 export function QuizPage() {
   const params = new URLSearchParams(window.location.search);
   const courseId = params.get('course_id');
@@ -41,10 +44,32 @@ export function QuizPage() {
   const [message, setMessage] = useState('');
   const [submittedResult, setSubmittedResult] = useState<QuizAttemptResult | null>(null);
   const [attemptsHistory, setAttemptsHistory] = useState<QuizAttemptResult[]>([]);
+  const [attemptsByQuizId, setAttemptsByQuizId] = useState<Record<string, QuizAttemptResult[]>>({});
   const [showHistory, setShowHistory] = useState(false);
+  const [quizStatusFilter, setQuizStatusFilter] = useState<QuizStatusFilter>('all');
+  const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>('all');
 
   const [hasStarted, setHasStarted] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+
+  async function refreshQuizAttempts(items = quizzes) {
+    if (user?.role !== 'student' || !items.length) {
+      setAttemptsByQuizId({});
+      return;
+    }
+
+    const entries = await Promise.all(
+      items.map(async (quiz) => {
+        try {
+          const history = await api.getQuizAttempts(quiz._id);
+          return [quiz._id, history] as const;
+        } catch {
+          return [quiz._id, []] as const;
+        }
+      }),
+    );
+    setAttemptsByQuizId(Object.fromEntries(entries));
+  }
 
   // Load user's courses if no courseId specified in URL
   useEffect(() => {
@@ -88,6 +113,7 @@ export function QuizPage() {
     api.getCourseQuizzes(selectedCourseId)
       .then((items) => {
         setQuizzes(items);
+        void refreshQuizAttempts(items);
         if (items.length > 0) {
           if (!items.some((q) => q._id === selectedQuizId)) {
             setSelectedQuizId(items[0]._id);
@@ -100,6 +126,17 @@ export function QuizPage() {
       .catch((err) => setMessage(err instanceof Error ? err.message : 'Không thể tải danh sách quiz'))
       .finally(() => setIsLoading(false));
   }, [selectedCourseId]);
+
+  useEffect(() => {
+    if (user?.role !== 'student' || !quizzes.length || hasStarted) return;
+
+    const intervalId = window.setInterval(() => {
+      void refreshQuizAttempts(quizzes);
+    }, 10000);
+
+    return () => window.clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quizzes, user?.role, hasStarted]);
 
   // Load selected quiz details / history when quiz selection changes
   useEffect(() => {
@@ -152,6 +189,7 @@ export function QuizPage() {
       setTimeLeft(remainingSeconds);
       setQuestions(attempt.questions);
       setHasStarted(true);
+      await refreshQuizAttempts(quizzes);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Không thể khởi tạo bài kiểm tra';
       if (errMsg.includes('QUIZ_HAS_NO_QUESTIONS') || errMsg.includes('no questions')) {
@@ -188,6 +226,45 @@ export function QuizPage() {
 
   const answeredCount = Object.values(selectedAnswers).filter((answerIds) => answerIds.length > 0).length;
   const progressPercent = questions.length ? Math.round((answeredCount / questions.length) * 100) : 0;
+  const visibleQuizzes = quizzes.filter((quiz) => {
+    const completed = (attemptsByQuizId[quiz._id] ?? []).some((attempt) => attempt.status === 'submitted');
+    const difficulty = quiz.time_limit >= 60 ? 'advanced' : quiz.time_limit >= 30 ? 'medium' : 'basic';
+    const matchesStatus =
+      quizStatusFilter === 'all' ||
+      (quizStatusFilter === 'completed' ? completed : !completed);
+    const matchesDifficulty = difficultyFilter === 'all' || difficultyFilter === difficulty;
+
+    return matchesStatus && matchesDifficulty;
+  });
+
+  function getQuizCardStatus(quizId: string) {
+    const attempts = attemptsByQuizId[quizId] ?? [];
+    const submittedAttempts = attempts.filter((attempt) => attempt.status === 'submitted');
+    const inProgressAttempt = attempts.find((attempt) => attempt.status === 'in_progress');
+    const expiredAttempt = attempts.find((attempt) => attempt.status === 'expired');
+    const latestSubmitted = submittedAttempts[0];
+
+    if (latestSubmitted) {
+      const score = latestSubmitted.score ?? 0;
+      const total = latestSubmitted.total_score ?? 0;
+      const percent = total ? Math.round((score / total) * 100) : 100;
+      return {
+        label: `Hoàn thành · ${score}/${total}`,
+        percent,
+        tone: 'completed' as const,
+      };
+    }
+
+    if (inProgressAttempt) {
+      return { label: 'Đang làm', percent: 42, tone: 'active' as const };
+    }
+
+    if (expiredAttempt) {
+      return { label: 'Hết giờ', percent: 100, tone: 'expired' as const };
+    }
+
+    return { label: 'Chưa bắt đầu', percent: 0, tone: 'idle' as const };
+  }
 
   function toggleAnswer(question: QuizQuestion, answerId: string) {
     if (submittedResult) return; // Locked if already submitted
@@ -226,6 +303,7 @@ export function QuizPage() {
       if (selectedQuizId) {
         const history = await api.getQuizAttempts(selectedQuizId).catch(() => []);
         setAttemptsHistory(history);
+        setAttemptsByQuizId((current) => ({ ...current, [selectedQuizId]: history }));
       }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Nộp bài thất bại. Vui lòng thử lại.');
@@ -235,14 +313,15 @@ export function QuizPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#0d131f] text-[#dde2f4] selection:bg-[#adc7ff]/30">
+    <div className="flex min-h-screen flex-col bg-[#070d19] text-[#e7ecff] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <AppToast message={message} tone={message.includes('thành công') ? 'success' : message.startsWith('Thời gian') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/quiz" user={user} />
 
-      <main className="mx-auto w-full max-w-7xl flex-grow space-y-6 px-4 py-10 md:pl-72 md:pr-8">
-        <section className="rounded-xl border border-[#414754]/50 bg-[#1a202c] p-6">
+      <main className="mx-auto w-full max-w-[1320px] flex-grow space-y-6 px-4 py-6 md:pl-64 md:pr-8">
+        {hasStarted && !submittedResult && (
+        <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
           <div className="flex flex-col justify-between gap-6 md:flex-row md:items-start">
             <div>
               <h1 className="mb-1 text-[26px] font-semibold leading-8 text-[#dde2f4]">Bài kiểm tra (Quiz)</h1>
@@ -254,7 +333,7 @@ export function QuizPage() {
                 <button
                   type="button"
                   onClick={() => setShowHistory(!showHistory)}
-                  className="flex items-center gap-2 rounded-lg border border-[#414754] bg-[#242a37] px-4 py-2 font-mono text-[13px] text-[#adc7ff] hover:bg-[#2f3542]"
+                  className="flex items-center gap-2 rounded-xl border border-[#354055] bg-[#070d19] px-4 py-2 font-mono text-[13px] text-[#adc7ff] hover:bg-[#151e2d]"
                 >
                   <span className="material-symbols-outlined text-[18px]">history</span>
                   {showHistory ? 'Ẩn lịch sử' : `Lịch sử làm bài (${attemptsHistory.length})`}
@@ -262,7 +341,7 @@ export function QuizPage() {
               )}
 
               {expiresAt && !submittedResult && (
-                <div className="flex w-fit items-center gap-3 rounded-lg border border-[#414754]/50 bg-[#242a37] px-6 py-2">
+                <div className="flex w-fit items-center gap-3 rounded-xl border border-[#354055] bg-[#070d19] px-6 py-2">
                   <span className="material-symbols-outlined animate-pulse text-[#adc7ff]">schedule</span>
                   <span className="font-mono text-[14px] font-medium text-[#adc7ff]">{formatTime(timeLeft)} còn lại</span>
                 </div>
@@ -282,10 +361,11 @@ export function QuizPage() {
             </div>
           )}
         </section>
+        )}
 
         {/* Attempt History Section */}
         {showHistory && (
-          <section className="rounded-xl border border-[#414754]/50 bg-[#161c28] p-6">
+          <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
             <h3 className="mb-4 text-[20px] font-semibold text-[#dde2f4]">Lịch sử nộp bài</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-left font-mono text-[14px]">
@@ -320,10 +400,10 @@ export function QuizPage() {
         {!hasStarted && !submittedResult && (
           <div className="space-y-6">
             {myCourses.length > 0 && (
-              <label className="block rounded-xl border border-[#414754]/50 bg-[#161c28] p-4 max-w-md">
+              <label className="hidden max-w-md rounded-2xl border border-[#253047] bg-[#111827]/92 p-4 shadow-xl shadow-black/20">
                 <span className="mb-2 block font-mono text-[12px] uppercase tracking-wider text-[#8b90a0]">Chọn khóa học</span>
                 <select
-                  className="w-full rounded-lg border border-[#414754] bg-[#0d131f] px-4 py-3 text-[#dde2f4] font-medium"
+                  className="w-full rounded-xl border border-[#354055] bg-[#070d19] px-4 py-3 font-medium text-[#e7ecff] outline-none focus:border-[#8fb7ff]"
                   value={selectedCourseId}
                   onChange={(event) => setSelectedCourseId(event.target.value)}
                 >
@@ -338,29 +418,109 @@ export function QuizPage() {
             )}
 
             {/* List of Quizzes in Course */}
-            <div>
-              <h2 className="mb-4 text-[20px] font-semibold text-[#dde2f4]">
+            <div className="quiz-library-panel rounded-2xl border border-[#253047] bg-[#111827]/92 p-7 shadow-2xl shadow-black/25">
+              <div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
+                <div>
+                  <span className="inline-flex items-center gap-2 rounded-full border border-[#24dfba]/25 bg-[#24dfba]/10 px-4 py-1.5 font-mono text-[12px] font-bold uppercase tracking-wider text-[#24dfba]">
+                    <span className="material-symbols-outlined text-[18px]">quiz</span>
+                    Quiz library
+                  </span>
+                  <h2 className="mt-3 text-[24px] font-black text-white">Danh sách bài kiểm tra</h2>
+                  <p className="mt-1 text-[14px] text-[#8f9bb3]">Chọn một bài quiz để luyện tập và kiểm tra kiến thức trong khóa học.</p>
+                </div>
+                <span className="rounded-xl border border-[#354055] bg-[#070d19] px-5 py-3 font-mono text-[14px] text-[#adc7ff]">
+                  {visibleQuizzes.length}/{quizzes.length} quiz
+                </span>
+              </div>
+              <h2 className="hidden">
                 Danh sách bài kiểm tra ({quizzes.length})
               </h2>
 
+              <div className="mb-5 flex flex-wrap items-center gap-3">
+                <div className="flex items-center rounded-xl border border-[#253047] bg-[#070d19] p-1.5">
+                  {[
+                    { value: 'all', label: 'Tất cả' },
+                    { value: 'completed', label: 'Đã hoàn thành' },
+                    { value: 'not_started', label: 'Chưa bắt đầu' },
+                  ].map((item) => (
+                    <button
+                      key={item.value}
+                      className={`rounded-lg px-4 py-2.5 text-[14px] font-bold transition ${
+                        quizStatusFilter === item.value
+                          ? 'bg-[#adc7ff] text-[#00285b]'
+                          : 'text-[#b8c1d6] hover:bg-[#111827] hover:text-white'
+                      }`}
+                      type="button"
+                      onClick={() => setQuizStatusFilter(item.value as QuizStatusFilter)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+
+                <select
+                  className="h-10 rounded-xl border border-[#253047] bg-[#070d19] px-3 text-[12px] font-bold text-[#e7ecff] outline-none focus:border-[#8fb7ff]"
+                  value={difficultyFilter}
+                  onChange={(event) => setDifficultyFilter(event.target.value as DifficultyFilter)}
+                >
+                  <option value="all">Độ khó: Tất cả</option>
+                  <option value="basic">Cơ bản</option>
+                  <option value="medium">Trung bình</option>
+                  <option value="advanced">Nâng cao</option>
+                </select>
+
+                {myCourses.length > 0 && (
+                  <select
+                    className="h-10 rounded-xl border border-[#253047] bg-[#070d19] px-3 text-[12px] font-bold text-[#e7ecff] outline-none focus:border-[#8fb7ff]"
+                    value={selectedCourseId}
+                    onChange={(event) => setSelectedCourseId(event.target.value)}
+                  >
+                    <option value="">Khóa học: Tất cả</option>
+                    {myCourses.map((course) => (
+                      <option key={course._id} value={course._id}>
+                        Khóa học: {course.title}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
               {isLoading && <p className="font-mono text-[13px] text-[#8b90a0]">Đang tải danh sách bài kiểm tra...</p>}
 
-              {!isLoading && quizzes.length === 0 && (
-                <div className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
+              {!isLoading && visibleQuizzes.length === 0 && (
+                <div className="rounded-2xl border border-dashed border-[#354055] bg-[#111827]/92 p-10 text-center shadow-xl shadow-black/20">
                   <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">quiz</span>
                   <h3 className="text-[20px] font-semibold text-[#dde2f4]">Chưa có bài kiểm tra nào</h3>
                   <p className="mt-2 text-[#8b90a0]">Khóa học này hiện chưa có bài kiểm tra do Giảng viên tạo.</p>
                 </div>
               )}
 
-              {!isLoading && quizzes.length > 0 && (
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                  {quizzes.map((quiz) => (
-                    <article key={quiz._id} className="flex flex-col justify-between rounded-xl border border-white/5 bg-[#161c28] p-6 shadow-md transition hover:border-[#adc7ff]/30">
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <span className="rounded bg-[#adc7ff]/10 px-2.5 py-1 font-mono text-[12px] text-[#adc7ff]">Quiz</span>
-                          <span className="flex items-center gap-1 font-mono text-[12px] text-[#8b90a0]">
+              {!isLoading && visibleQuizzes.length > 0 && (
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  {visibleQuizzes.map((quiz, index) => {
+                    const cardStatus = user?.role === 'student'
+                      ? getQuizCardStatus(quiz._id)
+                      : {
+                          label: selectedQuizId === quiz._id ? 'Đang xem' : 'Sẵn sàng',
+                          percent: selectedQuizId === quiz._id ? 100 : 0,
+                          tone: selectedQuizId === quiz._id ? 'active' as const : 'idle' as const,
+                        };
+                    const progressTone = cardStatus.tone === 'completed'
+                      ? 'bg-[#24dfba]'
+                      : cardStatus.tone === 'active'
+                        ? 'bg-[#ffc080]'
+                        : cardStatus.tone === 'expired'
+                          ? 'bg-[#ffb4ab]'
+                          : index % 3 === 1 ? 'bg-[#24dfba]' : index % 3 === 0 ? 'bg-[#ffc080]' : 'bg-[#adc7ff]';
+
+                    return (
+                    <article key={quiz._id} className={`group flex min-h-[380px] flex-col justify-between overflow-hidden rounded-2xl border border-[#253047] bg-[#070d19] shadow-2xl shadow-black/25 transition-all duration-300 ${index % 3 === 1 ? 'hover:border-[#24dfba]/35' : index % 3 === 0 ? 'hover:border-[#ffc080]/35' : 'hover:border-[#adc7ff]/35'}`}>
+                      <div className="p-7">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className={`rounded-full px-4 py-1.5 font-mono text-[11px] font-black uppercase tracking-wider ${index % 3 === 1 ? 'bg-[#24dfba]/10 text-[#24dfba]' : index % 3 === 0 ? 'bg-[#ffc080]/10 text-[#ffc080]' : 'bg-[#adc7ff]/10 text-[#adc7ff]'}`}>
+                            {index % 3 === 1 ? 'Mới cập nhật' : index % 3 === 0 ? 'Thử thách' : 'Hệ thống'}
+                          </span>
+                          <span className="flex items-center gap-1.5 rounded-xl bg-[#111827] px-3 py-1.5 font-mono text-[14px] font-bold text-[#e7ecff]">
                             <span className="material-symbols-outlined text-[16px]">schedule</span>
                             {quiz.time_limit} phút
                           </span>
@@ -369,15 +529,35 @@ export function QuizPage() {
                         <p className="mt-2 line-clamp-2 text-[14px] leading-6 text-[#c1c6d7]">
                           {quiz.description || 'Bài kiểm tra đánh giá kiến thức khóa học.'}
                         </p>
+                        <div className="mt-5 grid grid-cols-2 gap-3">
+                          <div className="flex items-center gap-2 rounded-xl bg-[#111827] px-3 py-2">
+                            <span className="material-symbols-outlined text-[17px] text-[#adc7ff]">format_list_numbered</span>
+                            <span className="font-mono text-[11px] text-[#b8c1d6]">Câu hỏi</span>
+                          </div>
+                          <div className="flex items-center gap-2 rounded-xl bg-[#111827] px-3 py-2">
+                            <span className="material-symbols-outlined text-[17px] text-[#adc7ff]">military_tech</span>
+                            <span className="font-mono text-[11px] text-[#b8c1d6]">{quiz.time_limit >= 60 ? 'Nâng cao' : quiz.time_limit >= 30 ? 'Trung bình' : 'Cơ bản'}</span>
+                          </div>
+                        </div>
+                        <div className="mt-5">
+                          <div className="quiz-card-status mb-2 flex justify-between font-mono text-[11px]">
+                            <span className="text-[#8f9bb3]">Trạng thái: {cardStatus.label}</span>
+                            <span className="text-[#8f9bb3]">Trạng thái: {user?.role === 'student' ? 'Chưa bắt đầu' : selectedQuizId === quiz._id ? 'Đang xem' : 'Sẵn sàng'}</span>
+                            <span className={cardStatus.tone === 'completed' ? 'text-[#24dfba]' : cardStatus.tone === 'active' ? 'text-[#ffc080]' : cardStatus.tone === 'expired' ? 'text-[#ffb4ab]' : 'text-[#8f9bb3]'}>{cardStatus.percent}%</span>
+                          </div>
+                          <div className="h-2 overflow-hidden rounded-full bg-[#111827]">
+                            <div className={`h-full rounded-full transition-all duration-500 ${progressTone}`} style={{ width: `${cardStatus.percent}%` }} />
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="mt-6 pt-4 border-t border-white/5 flex items-center justify-between">
+                      <div className="mt-auto flex items-center justify-between border-t border-[#253047] bg-[#111827]/70 p-5">
                         {user?.role === 'student' ? (
                           <button
                             type="button"
                             onClick={() => void handleStartQuiz(quiz._id)}
                             disabled={isStarting}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#adc7ff] py-3 font-mono font-bold text-[#002e68] transition hover:bg-[#adc7ff]/90 disabled:opacity-50"
+                            className={`flex w-full items-center justify-center gap-2 rounded-xl py-4 font-mono text-[15px] font-black text-[#00285b] transition hover:brightness-110 active:scale-[0.98] disabled:opacity-50 ${index % 3 === 1 ? 'bg-[#24dfba]' : 'bg-[#adc7ff]'}`}
                           >
                             <span className="material-symbols-outlined text-[20px]">play_circle</span>
                             {isStarting && selectedQuizId === quiz._id ? 'Đang khởi tạo...' : 'Bắt đầu làm bài'}
@@ -386,14 +566,15 @@ export function QuizPage() {
                           <button
                             type="button"
                             onClick={() => setSelectedQuizId(quiz._id)}
-                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-[#adc7ff] py-3 font-mono font-bold text-[#adc7ff] transition hover:bg-[#adc7ff]/10"
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border border-[#adc7ff]/50 bg-[#adc7ff]/10 py-3 font-mono text-[13px] font-black text-[#adc7ff] transition hover:bg-[#adc7ff]/20"
                           >
                             Xem câu hỏi
                           </button>
                         )}
                       </div>
                     </article>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -404,7 +585,7 @@ export function QuizPage() {
 
         {/* Submitted Results Display */}
         {submittedResult && (
-          <section className="rounded-xl border border-[#24dfba]/40 bg-[#24dfba]/10 p-8 text-center">
+          <section className="rounded-2xl border border-[#24dfba]/40 bg-[#24dfba]/10 p-8 text-center shadow-xl shadow-black/20">
             <span className="material-symbols-outlined text-[64px] text-[#24dfba]">workspace_premium</span>
             <h2 className="mt-2 text-[28px] font-bold text-[#dde2f4]">Kết quả làm bài</h2>
             
@@ -434,11 +615,36 @@ export function QuizPage() {
             >
               Làm lại bài kiểm tra
             </button>
+            <div className="mt-3 flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSubmittedResult(null);
+                  setHasStarted(false);
+                  setQuestions([]);
+                  setSelectedAnswers({});
+                  setAttemptId('');
+                  setExpiresAt('');
+                  setTimeLeft(0);
+                }}
+                className="rounded-xl border border-[#adc7ff]/50 bg-[#adc7ff]/10 px-6 py-3 font-mono font-bold text-[#adc7ff] transition hover:bg-[#adc7ff]/20"
+              >
+                Quay lại danh sách quiz
+              </button>
+              {selectedCourseId && (
+                <a
+                  className="rounded-xl border border-[#24dfba]/40 bg-[#24dfba]/10 px-6 py-3 font-mono font-bold text-[#24dfba] transition hover:bg-[#24dfba]/20"
+                  href={`/lesson-detail?course_id=${encodeURIComponent(selectedCourseId)}`}
+                >
+                  Thoát về bài học
+                </a>
+              )}
+            </div>
           </section>
         )}
 
         {!isLoading && (hasStarted || user?.role !== 'student') && !questions.length && (
-          <div className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
+          <div className="rounded-2xl border border-dashed border-[#354055] bg-[#111827]/92 p-10 text-center shadow-xl shadow-black/20">
             <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">quiz</span>
             <h2 className="text-[22px] font-semibold text-[#dde2f4]">Chưa có câu hỏi quiz</h2>
           </div>
@@ -448,7 +654,7 @@ export function QuizPage() {
         {!submittedResult && (hasStarted || user?.role !== 'student') && questions.length > 0 && (
           <div className="space-y-5">
             {questions.map((question, index) => (
-              <section key={question._id} className="rounded-xl border border-[#414754]/40 bg-[#161c28] p-6 md:p-8">
+              <section key={question._id} className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-7">
                 <div className="mb-6 flex items-start gap-4">
                   <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-[#adc7ff]/10 font-bold text-[#adc7ff]">{index + 1}</span>
                   <div>

@@ -96,13 +96,13 @@ export function AdminUsersPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/admin-users" items={navItems} user={user} />
       <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
-      <main className="w-full space-y-5 px-4 py-6 md:pl-72 md:pr-8">
-        <section className="rounded-xl border border-white/5 bg-[#161c28] p-4">
+      <main className="mx-auto w-full max-w-[1180px] space-y-5 px-4 py-6 md:pl-64 md:pr-6">
+        <section className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
           <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(560px,1.2fr)] xl:items-center">
             <div>
               <p className="mb-1 font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Admin</p>
@@ -114,7 +114,7 @@ export function AdminUsersPage() {
 
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {stats.map((item) => (
-                <article key={item.label} className="min-h-[82px] min-w-0 rounded-lg border border-[#414754]/70 bg-[#0d131f] p-3">
+                <article key={item.label} className="min-h-[82px] min-w-0 rounded-xl border border-[#354055] bg-[#070d19] p-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className="material-symbols-outlined text-[22px] text-[#adc7ff]">{item.icon}</span>
                     <p className="text-[24px] font-semibold leading-none">{item.value}</p>
@@ -125,7 +125,7 @@ export function AdminUsersPage() {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2 xl:col-span-2">
-              <label className="flex h-12 min-w-0 items-center justify-between gap-3 rounded-lg border border-[#414754] bg-[#0d131f] px-4">
+              <label className="flex h-12 min-w-0 items-center justify-between gap-3 rounded-xl border border-[#354055] bg-[#070d19] px-4">
                 <span className="font-mono text-[12px] text-[#8b90a0]">Role</span>
                 <select className="min-w-[150px] bg-transparent text-[14px] font-semibold text-[#dde2f4] outline-none" value={role} onChange={(event) => setRole(event.target.value as RoleFilter)}>
                   <option value="">Tất cả</option>
@@ -134,7 +134,7 @@ export function AdminUsersPage() {
                   <option value="admin">Admin</option>
                 </select>
               </label>
-              <label className="flex h-12 min-w-0 items-center justify-between gap-3 rounded-lg border border-[#414754] bg-[#0d131f] px-4">
+              <label className="flex h-12 min-w-0 items-center justify-between gap-3 rounded-xl border border-[#354055] bg-[#070d19] px-4">
                 <span className="font-mono text-[12px] text-[#8b90a0]">Trạng thái</span>
                 <select className="min-w-[150px] bg-transparent text-[14px] font-semibold text-[#dde2f4] outline-none" value={status} onChange={(event) => setStatus(event.target.value as StatusFilter)}>
                   <option value="">Tất cả</option>
@@ -147,8 +147,8 @@ export function AdminUsersPage() {
           </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-white/5 bg-[#161c28]">
-          <div className="flex min-h-14 items-center justify-between border-b border-[#414754] px-5 py-3">
+        <section className="overflow-hidden rounded-2xl border border-[#253047] bg-[#111827]/92 shadow-xl shadow-black/20">
+          <div className="flex min-h-14 items-center justify-between border-b border-[#253047] px-5 py-3">
             <h2 className="text-[20px] font-semibold">Danh sách account</h2>
             {isLoading && <p className="font-mono text-[12px] text-[#8b90a0]">Đang tải...</p>}
           </div>
