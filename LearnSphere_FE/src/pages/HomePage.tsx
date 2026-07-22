@@ -42,7 +42,7 @@ export function HomePage() {
               </div>
 
               <h1 className="max-w-xl text-[48px] font-bold leading-[1.1] tracking-[-0.02em] text-[#dde2f4] md:text-[56px]">
-                Làm chủ Tương lai với Học tập <span className="text-[#adc7ff]">Hỗ trợ bởi AI</span> trên LearnSphere
+                Làm chủ Tương lai với Học tập <span className="text-[#adc7ff]">Hỗ trợ bởi AI</span> trên LearnSphere [AWS Cloud]
               </h1>
 
               <p className="max-w-xl text-[18px] leading-7 text-[#c1c6d7]">
