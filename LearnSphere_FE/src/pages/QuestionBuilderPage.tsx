@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { canManageSystem, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
@@ -308,6 +309,7 @@ export function QuestionBuilderPage() {
   return (
     <div className="min-h-screen w-full bg-[#0d131f] text-[#dde2f4]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/question-builder" items={navItems} user={user} />
 
@@ -424,8 +426,6 @@ export function QuestionBuilderPage() {
                 Tạo bằng AI
               </button>
             </div>
-
-            {message && <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">{message}</div>}
 
             <form className="space-y-4 rounded-xl border border-white/5 bg-[#161f2e]/80 p-5" onSubmit={handleCreateQuestion}>
               <textarea

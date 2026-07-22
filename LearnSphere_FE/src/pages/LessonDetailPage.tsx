@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { api, getStoredUser, type CourseProgress, type Lesson } from '../services/api';
@@ -72,6 +73,7 @@ export function LessonDetailPage() {
   return (
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/courses" user={user} />
 
@@ -127,12 +129,6 @@ export function LessonDetailPage() {
         </aside>
 
         <section className="space-y-6 lg:col-span-8">
-          {message && (
-            <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">
-              {message}
-            </div>
-          )}
-
           {!lesson && !isLoading && (
             <div className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
               <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">auto_stories</span>

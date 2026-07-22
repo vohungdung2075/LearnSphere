@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { canManageContent, getRoleLabel, getRoleNav } from '../lib/roleAccess';
 import { api, getStoredUser, type Course } from '../services/api';
@@ -73,6 +74,7 @@ export function LockedCoursesPage() {
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/locked-courses" items={navItems} user={user} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 md:pl-72 md:pr-8">
         <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
@@ -88,9 +90,9 @@ export function LockedCoursesPage() {
           </span>
         </section>
 
-        {(isLoading || message) && (
+        {isLoading && (
           <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">
-            {isLoading ? 'Đang tải dữ liệu...' : message}
+            Đang tải dữ liệu...
           </div>
         )}
 

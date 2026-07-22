@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { api, getStoredUser, type Course, type Quiz, type QuizAttemptResult, type QuizQuestion } from '../services/api';
@@ -236,6 +237,7 @@ export function QuizPage() {
   return (
     <div className="flex min-h-screen flex-col bg-[#0d131f] text-[#dde2f4] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
+      <AppToast message={message} tone={message.includes('thành công') ? 'success' : message.startsWith('Thời gian') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/quiz" user={user} />
 
@@ -280,12 +282,6 @@ export function QuizPage() {
             </div>
           )}
         </section>
-
-        {message && (
-          <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">
-            {message}
-          </div>
-        )}
 
         {/* Attempt History Section */}
         {showHistory && (

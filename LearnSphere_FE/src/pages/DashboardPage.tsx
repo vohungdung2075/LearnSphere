@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { getRoleLabel, getRoleNav, type NavItem } from '../lib/roleAccess';
@@ -81,6 +82,7 @@ export function DashboardPage() {
     <div className="min-h-screen overflow-x-hidden bg-[#0d131f] text-[#dde2f4] selection:bg-[#ffc080]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/dashboard" items={navItems} user={user} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <main className="min-h-screen pb-24 md:pl-64">
         <div className="mx-auto grid max-w-7xl grid-cols-12 gap-6 p-4 md:p-8">
@@ -170,7 +172,6 @@ export function DashboardPage() {
                   Xem tất cả
                 </a>
               </div>
-              {message && <div className="mb-4 rounded-lg border border-[#ffc080]/25 bg-[#ffc080]/10 px-4 py-3 font-mono text-[12px] text-[#ffc080]">{message}</div>}
               {isLoadingCourses && <p className="font-mono text-[12px] text-[#8b90a0]">Đang tải khóa học...</p>}
               {!isLoadingCourses && !myCourses.length && (
                 <div className="rounded-lg border border-dashed border-[#414754] bg-[#080e1a] p-8 text-center text-[#c1c6d7]">

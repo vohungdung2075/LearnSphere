@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { api, clearSession, getStoredUser, getToken, saveSession, type User } from '../services/api';
 
@@ -193,6 +194,7 @@ export function ProfilePage() {
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={displayedAvatar || fallbackAvatarSrc} />
       <RoleSidebar activePath="/profile" user={user} />
+      <AppToast message={message} tone={isError ? 'error' : 'success'} onClose={() => setMessage('')} />
 
       <main className="mx-auto grid max-w-7xl grid-cols-1 gap-6 px-4 py-8 md:pl-72 md:pr-8 lg:grid-cols-12">
         <aside className="lg:col-span-4">
@@ -236,7 +238,6 @@ export function ProfilePage() {
               <p className="mt-2 text-[14px] text-[#8b90a0]">Cập nhật tên hiển thị và ảnh đại diện của tài khoản.</p>
             </div>
 
-            {message && <div className={`mb-6 rounded-lg border px-4 py-3 text-[14px] ${isError ? 'border-[#ffb4ab]/30 bg-[#ffb4ab]/10 text-[#ffb4ab]' : 'border-[#24dfba]/30 bg-[#24dfba]/10 text-[#24dfba]'}`}>{message}</div>}
 
             <div className="space-y-6">
               <div>

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
+import Enrollment from "../models/Enrollment.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
 import { validateStoredFileKey } from "./file.service.js";
 
@@ -25,7 +26,18 @@ export const getAllCourses = async () => {
 		.populate("created_by", "full_name role") 
 		.sort({ createdAt: -1 }); 
 
-	return courses;
+	const enrollmentCounts = await Enrollment.aggregate([
+		{ $match: { status: "active", course_id: { $in: courses.map((course) => course._id) } } },
+		{ $group: { _id: "$course_id", enrollment_count: { $sum: 1 } } },
+	]);
+	const enrollmentCountByCourseId = new Map(
+		enrollmentCounts.map((item) => [item._id.toString(), item.enrollment_count]),
+	);
+
+	return courses.map((course) => ({
+		...course.toObject(),
+		enrollment_count: enrollmentCountByCourseId.get(course._id.toString()) ?? 0,
+	}));
 };
 
 

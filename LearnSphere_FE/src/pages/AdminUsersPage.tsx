@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { canManageSystem, getRoleLabel, getRoleNav } from '../lib/roleAccess';
 import { api, getStoredUser, type AdminUser, type Role } from '../services/api';
@@ -98,6 +99,7 @@ export function AdminUsersPage() {
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/admin-users" items={navItems} user={user} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
       <main className="w-full space-y-5 px-4 py-6 md:pl-72 md:pr-8">
         <section className="rounded-xl border border-white/5 bg-[#161c28] p-4">
@@ -144,8 +146,6 @@ export function AdminUsersPage() {
             </div>
           </div>
         </section>
-
-        {message && <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[#ffc080]">{message}</div>}
 
         <section className="overflow-hidden rounded-xl border border-white/5 bg-[#161c28]">
           <div className="flex min-h-14 items-center justify-between border-b border-[#414754] px-5 py-3">

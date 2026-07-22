@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { canManageContent, canModerateCourse, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
 import {
@@ -328,6 +329,7 @@ export function LessonManagementPage() {
   return (
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
+      <AppToast message={message} tone={message.startsWith('Đang ') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
 
       <RoleSidebar activePath="/lesson-management" items={navItems} user={user} />
 
@@ -348,9 +350,9 @@ export function LessonManagementPage() {
           </label>
         </section>
 
-        {(isLoading || message) && (
+        {isLoading && (
           <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">
-            {isLoading ? 'Đang tải dữ liệu...' : message}
+            Đang tải dữ liệu...
           </div>
         )}
 

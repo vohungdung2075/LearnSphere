@@ -23,6 +23,7 @@ export type Course = {
   is_deleted?: boolean;
   deleted_at?: string | null;
   deleted_by?: string | Pick<User, '_id' | 'full_name' | 'role'> | null;
+  enrollment_count?: number;
 };
 
 export type Enrollment = {
