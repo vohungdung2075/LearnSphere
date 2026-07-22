@@ -76,7 +76,7 @@ function getRoute(pathname: string): RouteDefinition {
     '/lesson-management': { element: <LessonManagementPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/locked-courses': { element: <LockedCoursesPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/quiz': { element: <QuizPage />, requiresAuth: true },
-    '/question-builder': { element: <QuestionBuilderPage />, requiresAuth: true, roles: ['tutor'] },
+    '/question-builder': { element: <QuestionBuilderPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/system-monitoring': { element: <SystemMonitoringPage />, requiresAuth: true, roles: ['admin'] },
     '/admin-users': { element: <AdminUsersPage />, requiresAuth: true, roles: ['admin'] },
     '/profile': { element: <ProfilePage />, requiresAuth: true },

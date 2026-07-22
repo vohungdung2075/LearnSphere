@@ -3,7 +3,7 @@ import Lesson from "../models/Lesson.model.js";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
 import LessonProgress from "../models/LessonProgress.model.js";
-import { validateStoredFileKey } from "./file.service.js";
+import { deleteS3Objects, validateStoredFileKey } from "./file.service.js";
 
 const verifyAccessPermission = async (course, userId, userRole) => {
 	if (userRole === "admin") return;
@@ -155,8 +155,17 @@ export const updateLesson = async (lessonId, { title, content, video_key, docume
 
 	if (title) lesson.title = title.trim();
 	if (content !== undefined) lesson.content = content.trim();
-	if (video_key !== undefined) lesson.video_key = normalizedVideoKey;
-	if (document_key !== undefined) lesson.document_key = normalizedDocumentKey;
+	if (video_key !== undefined && normalizedVideoKey !== lesson.video_key) {
+		lesson.video_key = normalizedVideoKey;
+	}
+	if (document_key !== undefined && normalizedDocumentKey !== lesson.document_key) {
+		lesson.document_key = normalizedDocumentKey;
+		lesson.ai_document_text = "";
+		lesson.ai_indexed_document_key = "";
+		lesson.ai_index_status = "not_indexed";
+		lesson.ai_indexed_at = null;
+		lesson.ai_index_error = "";
+	}
 	if (order_index) lesson.order_index = order_index;
 	return await lesson.save();
 };
@@ -174,10 +183,14 @@ export const deleteLesson = async (lessonId, userId, userRole) => {
 	const isOwner = course.created_by.toString() === userId.toString();
 	if (userRole !== "admin" && !isOwner) throw new Error("FORBIDDEN_LESSON_ACTION");
 
+	const s3Result = await deleteS3Objects([lesson.video_key, lesson.document_key]);
+	lesson.video_key = "";
+	lesson.document_key = "";
+	await lesson.save();
 	await LessonProgress.deleteMany({ lesson_id: lesson._id });
 	await lesson.deleteOne();
 
-	return { message: "Lesson deleted successfully" };
+	return { message: "Lesson and S3 files deleted successfully", deleted_s3_objects: s3Result.deleted_count };
 };
 
 

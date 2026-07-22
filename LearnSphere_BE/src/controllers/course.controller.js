@@ -1,4 +1,5 @@
 import { createCourse, getAllCourses, getCourseById, updateCourse, deleteCourse, getDeletedCourses, restoreCourse } from "../services/course.service.js";
+import { permanentlyDeleteCourse } from "../services/course-cleanup.service.js";
 
 export const handleCreateCourse = async (req, res) => {
 	const { title, description, enrollment_type } = req.body ?? {};
@@ -120,6 +121,22 @@ export const handleRestoreCourse = async (req, res) => {
 		if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "Forbidden - You do not have permission to restore this course" });
 
 		console.error("Restore course error:", error);
+		return res.status(500).json({ message: "Internal server error" });
+	}
+};
+
+export const handlePermanentlyDeleteCourse = async (req, res) => {
+	const { course_id } = req.params ?? {};
+	try {
+		const result = await permanentlyDeleteCourse(course_id, req.user._id, req.user.role);
+		return res.status(200).json({ message: "Course, related data, and S3 files permanently deleted", ...result });
+	} catch (error) {
+		if (error.message === "INVALID_COURSE_ID") return res.status(400).json({ message: "Invalid course ID format" });
+		if (error.message === "DELETED_COURSE_NOT_FOUND") return res.status(404).json({ message: "Deleted course not found" });
+		if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "Forbidden - You cannot permanently delete this course" });
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") return res.status(502).json({ message: "Unable to delete course files from S3; course remains in trash", code: error.message });
+
+		console.error("Permanent course deletion error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
 };

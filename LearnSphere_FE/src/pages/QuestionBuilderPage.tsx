@@ -3,8 +3,8 @@ import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
-import { canManageSystem, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
-import { api, getStoredUser, type Course, type QuestionInput, type Quiz, type QuizQuestion } from '../services/api';
+import { canManageContent, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
+import { api, getAIErrorMessage, getStoredUser, type Course, type Lesson, type QuestionInput, type Quiz, type QuizQuestion } from '../services/api';
 
 type QuestionForm = {
   content: string;
@@ -67,20 +67,26 @@ export function QuestionBuilderPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
+  const [lessons, setLessons] = useState<Lesson[]>([]);
+  const [generatedQuestions, setGeneratedQuestions] = useState<QuestionInput[]>([]);
   const [selectedCourseId, setSelectedCourseId] = useState(initialCourseId);
   const [selectedQuizId, setSelectedQuizId] = useState(initialQuizId);
   const [quizForm, setQuizForm] = useState<QuizForm>(emptyQuizForm);
   const [questionForm, setQuestionForm] = useState<QuestionForm>(emptyQuestionForm);
+  const [selectedAILessonId, setSelectedAILessonId] = useState('');
+  const [aiQuestionCount, setAIQuestionCount] = useState('5');
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
   const [isLoadingQuizzes, setIsLoadingQuizzes] = useState(false);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
   const [isCreatingQuiz, setIsCreatingQuiz] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
+  const [isSavingGenerated, setIsSavingGenerated] = useState(false);
   const [message, setMessage] = useState('');
 
   const selectedQuiz = useMemo(() => quizzes.find((quiz) => quiz._id === selectedQuizId), [quizzes, selectedQuizId]);
   const selectedCourse = useMemo(() => courses.find((course) => course._id === selectedCourseId), [courses, selectedCourseId]);
-  const canEditQuizDetail = user?.role === 'tutor';
+  const canEditQuizDetail = canManageContent(user);
   const correctCount = questionForm.answers.filter((answer) => answer.is_correct && answer.content.trim()).length;
 
   useEffect(() => {
@@ -89,10 +95,10 @@ export function QuestionBuilderPage() {
     setIsLoadingCourses(true);
     api.getCourses()
       .then((items) => {
-        const ownCourses = items.filter((course) => isCourseOwner(user, course));
-        setCourses(ownCourses);
-        if (!selectedCourseId && ownCourses[0]) {
-          setSelectedCourseId(ownCourses[0]._id);
+        const availableCourses = user?.role === 'admin' ? items : items.filter((course) => isCourseOwner(user, course));
+        setCourses(availableCourses);
+        if (!selectedCourseId && availableCourses[0]) {
+          setSelectedCourseId(availableCourses[0]._id);
         }
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : 'Không thể tải khóa học'))
@@ -122,6 +128,28 @@ export function QuestionBuilderPage() {
       })
       .finally(() => setIsLoadingQuizzes(false));
   }, [selectedCourseId, selectedQuizId]);
+
+  useEffect(() => {
+    if (!selectedCourseId) {
+      setLessons([]);
+      setSelectedAILessonId('');
+      setGeneratedQuestions([]);
+      return;
+    }
+
+    api.getLessons(selectedCourseId)
+      .then((items) => {
+        setLessons(items);
+        setSelectedAILessonId((current) => items.some((lesson) => lesson._id === current) ? current : items[0]?._id ?? '');
+        setGeneratedQuestions([]);
+      })
+      .catch((error) => {
+        setLessons([]);
+        setSelectedAILessonId('');
+        setGeneratedQuestions([]);
+        setMessage(getAIErrorMessage(error, 'Không thể tải bài học để tạo quiz bằng AI.'));
+      });
+  }, [selectedCourseId]);
 
   useEffect(() => {
     if (!selectedQuizId) {
@@ -296,13 +324,72 @@ export function QuestionBuilderPage() {
     }
   }
 
+  async function handleGenerateWithAI() {
+    if (!selectedAILessonId) {
+      setMessage('Vui lòng chọn bài học có nội dung để AI tạo câu hỏi.');
+      return;
+    }
+
+    const count = Number(aiQuestionCount);
+    if (!Number.isInteger(count) || count < 1 || count > 20) {
+      setMessage('Số câu hỏi AI phải từ 1 đến 20.');
+      return;
+    }
+
+    setIsGeneratingAI(true);
+    setGeneratedQuestions([]);
+    const sourceLesson = lessons.find((lesson) => lesson._id === selectedAILessonId);
+    setMessage(
+      sourceLesson?.document_key && sourceLesson.ai_index_status !== 'ready'
+        ? 'AI đang đọc document trước khi tạo câu hỏi. Quá trình này có thể mất một lúc...'
+        : '',
+    );
+    try {
+      const result = await api.generateQuizWithAI({
+        lesson_id: selectedAILessonId,
+        number_of_questions: count,
+      });
+      setGeneratedQuestions(result.questions);
+      setMessage(`AI đã tạo ${result.questions.length} câu hỏi nháp. Hãy kiểm tra trước khi thêm vào quiz.`);
+    } catch (error) {
+      setMessage(getAIErrorMessage(error, 'Không thể tạo câu hỏi bằng AI.'));
+    } finally {
+      setIsGeneratingAI(false);
+    }
+  }
+
+  async function handleSaveGeneratedQuestions() {
+    if (!selectedQuizId || !generatedQuestions.length || isSavingGenerated) {
+      if (!selectedQuizId) setMessage('Vui lòng chọn quiz nhận các câu hỏi AI.');
+      return;
+    }
+
+    setIsSavingGenerated(true);
+    let savedCount = 0;
+    try {
+      for (const question of generatedQuestions) {
+        await api.createQuizQuestion(selectedQuizId, question);
+        savedCount += 1;
+      }
+      setGeneratedQuestions([]);
+      await loadQuestions(selectedQuizId);
+      setMessage(`Đã thêm ${savedCount} câu hỏi AI vào quiz.`);
+    } catch (error) {
+      await loadQuestions(selectedQuizId);
+      setGeneratedQuestions((current) => current.slice(savedCount));
+      setMessage(`${getAIErrorMessage(error, 'Không thể lưu toàn bộ câu hỏi AI.')} Đã lưu ${savedCount} câu.`);
+    } finally {
+      setIsSavingGenerated(false);
+    }
+  }
+
   if (!canEditQuizDetail) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0d131f] px-4 text-[#dde2f4]">
         <section className="max-w-md rounded-2xl border border-[#354055] bg-[#151c2a] p-8 text-center shadow-2xl shadow-black/30">
           <span className="material-symbols-outlined mb-4 text-[48px] text-[#ffb4ab]">lock</span>
           <h1 className="text-[26px] font-bold">Không có quyền truy cập</h1>
-          <p className="mt-2 text-[#b8c1d6]">Chỉ gia sư được tạo chi tiết quiz cho khóa học do mình sở hữu.</p>
+          <p className="mt-2 text-[#b8c1d6]">Chỉ gia sư sở hữu khóa học hoặc quản trị viên được quản lý chi tiết quiz.</p>
           <a className="mt-6 inline-flex rounded-xl bg-[#adc7ff] px-5 py-3 font-bold text-[#002e68]" href="/dashboard">
             Về bảng điều khiển
           </a>
@@ -455,14 +542,118 @@ export function QuestionBuilderPage() {
                 </div>
               </div>
               <button
-                className="flex items-center gap-2 rounded-xl bg-[#fe9800] px-5 py-3 font-bold text-[#3b2300] shadow-lg shadow-[#fe9800]/20 transition hover:brightness-110 active:scale-95"
+                className="flex items-center gap-2 rounded-xl bg-[#fe9800] px-5 py-3 font-bold text-[#3b2300] shadow-lg shadow-[#fe9800]/20 transition hover:brightness-110 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
-                onClick={() => setMessage(canManageSystem(user) ? 'Chức năng tạo tự động chưa sẵn sàng.' : 'Chức năng tạo câu hỏi bằng AI chưa sẵn sàng.')}
+                disabled={!selectedAILessonId || isGeneratingAI}
+                onClick={() => void handleGenerateWithAI()}
               >
-                <span className="material-symbols-outlined text-[20px]">auto_awesome</span>
-                Tạo bằng AI
+                <span className={`material-symbols-outlined text-[20px] ${isGeneratingAI ? 'animate-spin' : ''}`}>
+                  {isGeneratingAI ? 'progress_activity' : 'auto_awesome'}
+                </span>
+                {isGeneratingAI ? 'AI đang tạo...' : 'Tạo bằng AI'}
               </button>
             </div>
+
+            <section className="rounded-2xl border border-[#fe9800]/25 bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_120px_auto] md:items-end">
+                <label className="flex flex-col gap-2">
+                  <span className={labelClass}>Bài học làm nguồn</span>
+                  <select
+                    className={fieldClass}
+                    value={selectedAILessonId}
+                    disabled={!selectedCourseId || isGeneratingAI}
+                    onChange={(event) => {
+                      setSelectedAILessonId(event.target.value);
+                      setGeneratedQuestions([]);
+                    }}
+                  >
+                    <option value="">Chọn bài học</option>
+                    {lessons.map((lesson) => (
+                      <option key={lesson._id} value={lesson._id}>{lesson.title}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-2">
+                  <span className={labelClass}>Số câu</span>
+                  <input
+                    className={fieldClass}
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={aiQuestionCount}
+                    disabled={isGeneratingAI}
+                    onChange={(event) => setAIQuestionCount(event.target.value)}
+                  />
+                </label>
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#fe9800]/40 bg-[#fe9800]/10 px-5 py-3 font-bold text-[#ffcc7a] hover:bg-[#fe9800]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                  type="button"
+                  disabled={!selectedAILessonId || isGeneratingAI}
+                  onClick={() => void handleGenerateWithAI()}
+                >
+                  <span className="material-symbols-outlined text-[19px]">auto_awesome</span>
+                  Sinh câu hỏi
+                </button>
+              </div>
+
+              {!lessons.length && selectedCourseId && (
+                <p className="mt-4 rounded-xl border border-dashed border-[#46536b] p-4 text-[13px] text-[#9da8bd]">
+                  Khóa học chưa có bài học để AI tạo câu hỏi.
+                </p>
+              )}
+
+              {generatedQuestions.length > 0 && (
+                <div className="mt-5 space-y-4 border-t border-[#253047] pt-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-[18px] font-bold text-white">Bản nháp do AI tạo</h3>
+                      <p className="text-[12px] text-[#8f9bb3]">Kiểm tra đáp án trước khi thêm vào quiz đang chọn.</p>
+                    </div>
+                    <button
+                      className="rounded-xl bg-[#24dfba] px-5 py-3 font-mono text-[12px] font-black text-[#00382e] disabled:cursor-not-allowed disabled:opacity-50"
+                      type="button"
+                      disabled={!selectedQuizId || isSavingGenerated}
+                      onClick={() => void handleSaveGeneratedQuestions()}
+                    >
+                      {isSavingGenerated ? 'Đang thêm...' : `Thêm ${generatedQuestions.length} câu vào quiz`}
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {generatedQuestions.map((question, index) => (
+                      <article key={`${question.content}-${index}`} className="rounded-xl border border-[#354055] bg-[#070d19] p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-mono text-[10px] uppercase tracking-wider text-[#ffcc7a]">
+                              Câu {index + 1} · {question.question_type === 'single_choice' ? 'Một đáp án' : 'Nhiều đáp án'}
+                            </p>
+                            <h4 className="mt-2 text-[15px] font-bold leading-6 text-white">{question.content}</h4>
+                          </div>
+                          <button
+                            className="text-[#ffb4ab]"
+                            type="button"
+                            aria-label="Bỏ câu hỏi nháp"
+                            onClick={() => setGeneratedQuestions((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                          >
+                            <span className="material-symbols-outlined text-[20px]">close</span>
+                          </button>
+                        </div>
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {question.answers.map((answer, answerIndex) => (
+                            <div
+                              key={`${answer.content}-${answerIndex}`}
+                              className={`rounded-lg border px-3 py-2 text-[13px] ${answer.is_correct ? 'border-[#24dfba]/40 bg-[#24dfba]/10 text-[#24dfba]' : 'border-[#253047] text-[#aeb8cc]'}`}
+                            >
+                              {answer.content}
+                            </div>
+                          ))}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
 
             <form className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20" onSubmit={handleCreateQuestion}>
               <div className="mb-5 flex flex-wrap items-center justify-between gap-3">

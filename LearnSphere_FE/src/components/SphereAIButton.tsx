@@ -1,8 +1,10 @@
 import { useMemo, useRef, useState, type FormEvent, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { api, getAIErrorMessage } from '../services/api';
 
 type SphereAIButtonProps = {
   className?: string;
+  href?: string;
 };
 
 type ChatMessage = {
@@ -21,13 +23,13 @@ type PopupSize = {
   height: number;
 };
 
-const POPUP_MARGIN = 8;
-const POPUP_GAP = 12;
-const MAX_POPUP_WIDTH = 420;
-const MAX_POPUP_HEIGHT = 440;
+const POPUP_MARGIN = 12;
+const POPUP_GAP = 16;
+const MAX_POPUP_WIDTH = 760;
+const MAX_POPUP_HEIGHT = 640;
 
 function getPopupSize(): PopupSize {
-  const availableWidth = Math.max(280, window.innerWidth - POPUP_MARGIN * 2);
+  const availableWidth = Math.max(320, window.innerWidth - POPUP_MARGIN * 2);
   const availableHeight = Math.max(320, window.innerHeight - POPUP_MARGIN * 2);
 
   return {
@@ -56,21 +58,31 @@ const initialMessages: ChatMessage[] = [
   },
 ];
 
-export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
+export function SphereAIButton({ className = '', href = '/ai-assistant' }: SphereAIButtonProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [popupPosition, setPopupPosition] = useState<PopupPosition>({ x: POPUP_MARGIN, y: POPUP_MARGIN });
   const [popupSize, setPopupSize] = useState<PopupSize>({ width: MAX_POPUP_WIDTH, height: MAX_POPUP_HEIGHT });
   const [isDragging, setIsDragging] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   const latestTopic = useMemo(() => {
     const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user');
     return latestUserMessage?.content ?? 'Hỗ trợ học tập';
   }, [messages]);
+
+  const aiContext = useMemo(() => {
+    const queryIndex = href.indexOf('?');
+    const params = new URLSearchParams(queryIndex >= 0 ? href.slice(queryIndex + 1) : '');
+    return {
+      course_id: params.get('course_id') || undefined,
+      lesson_id: params.get('lesson_id') || undefined,
+    };
+  }, [href]);
 
   function openChat() {
     const size = getPopupSize();
@@ -126,9 +138,9 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
     }
   }
 
-  function sendMessage(content: string) {
+  async function sendMessage(content: string) {
     const normalized = content.trim();
-    if (!normalized) return;
+    if (!normalized || isSending) return;
 
     const nextUserMessage: ChatMessage = {
       id: `user-${Date.now()}`,
@@ -136,19 +148,40 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
       content: normalized,
     };
 
-    const nextAssistantMessage: ChatMessage = {
-      id: `assistant-${Date.now()}`,
-      role: 'assistant',
-      content: 'Mình đã ghi nhận câu hỏi. Hiện popup này là giao diện trợ lý trong app; phần kết nối AI thật có thể được nối vào API sau.',
-    };
-
-    setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
+    setMessages((current) => [...current, nextUserMessage]);
     setInput('');
+    setIsSending(true);
+
+    try {
+      const result = await api.chatWithAI({
+        message: normalized,
+        ...aiContext,
+      });
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-${result.id}`,
+          role: 'assistant',
+          content: result.reply,
+        },
+      ]);
+    } catch (error) {
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-error-${Date.now()}`,
+          role: 'assistant',
+          content: getAIErrorMessage(error, 'Không thể gửi câu hỏi tới Sphere AI.'),
+        },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    sendMessage(input);
+    void sendMessage(input);
   }
 
   const popupNode = isOpen ? (
@@ -172,8 +205,8 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
           >
             <span className="material-symbols-outlined text-[19px]">close</span>
           </button>
-          <aside className="hidden w-44 shrink-0 flex-col gap-5 border-r border-[#414754] bg-[#161c28] p-3 2xl:flex">
-            <div className="rounded-xl border border-[#adc7ff]/40 bg-[#1a202c] p-3">
+          <aside className="hidden w-52 shrink-0 flex-col gap-5 border-r border-[#414754] bg-[#161c28] p-4 xl:flex">
+            <div className="rounded-xl border border-[#adc7ff]/40 bg-[#1a202c] p-4">
               <div className="flex items-center gap-3">
                 <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#4a8eff]/20 text-[#adc7ff]">
                   <span className="material-symbols-outlined">smart_toy</span>
@@ -219,7 +252,7 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
                     key={topic}
                     className="flex w-full items-center gap-3 rounded-lg p-3 text-left text-[#c1c6d7] transition hover:bg-[#2f3542]"
                     type="button"
-                    onClick={() => sendMessage(topic)}
+                    onClick={() => void sendMessage(topic)}
                   >
                     <span className="material-symbols-outlined text-[18px] text-[#24dfba]">topic</span>
                     <span className="truncate text-[13px]">{topic}</span>
@@ -231,19 +264,19 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
 
           <div className="flex min-w-0 flex-1 flex-col">
             <header
-              className={`flex h-14 cursor-grab touch-none select-none items-center justify-between border-b border-[#414754] bg-[#161c28] px-4 pr-14 ${isDragging ? 'cursor-grabbing' : ''}`}
+              className={`flex h-16 cursor-grab touch-none select-none items-center justify-between border-b border-[#414754] bg-[#161c28] px-6 pr-16 ${isDragging ? 'cursor-grabbing' : ''}`}
               onPointerDown={handleDragStart}
               onPointerMove={handleDragMove}
               onPointerUp={handleDragEnd}
               onPointerCancel={handleDragEnd}
             >
-              <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#4a8eff]/20 text-[#adc7ff]">
-                  <span className="material-symbols-outlined text-[18px]">bolt</span>
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#4a8eff]/20 text-[#adc7ff]">
+                  <span className="material-symbols-outlined text-[21px]">bolt</span>
                 </span>
                 <div>
-                  <h2 className="text-[15px] font-bold text-[#e7ecff]">Trợ lý AI LearnSphere</h2>
-                  <p className="font-mono text-[10px] text-[#8b90a0]">
+                  <h2 className="text-[17px] font-bold text-[#e7ecff]">Trợ lý AI LearnSphere</h2>
+                  <p className="mt-0.5 font-mono text-[11px] text-[#8b90a0]">
                     <span className="material-symbols-outlined align-[-3px] text-[13px]">open_with</span>
                     Kéo thanh này để di chuyển
                   </p>
@@ -251,7 +284,7 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
               </div>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-[#0d131f] p-4">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto bg-[#0d131f] p-5 md:p-6">
               {messages.map((message) => (
                 <div key={message.id} className={message.role === 'user' ? 'flex justify-end' : 'flex gap-3'}>
                   {message.role === 'assistant' && (
@@ -260,10 +293,10 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
                     </span>
                   )}
                   <div
-                    className={`max-w-[85%] rounded-2xl border p-4 text-[14px] leading-6 ${
+                    className={`break-words rounded-2xl border px-5 py-4 text-[15px] leading-7 ${
                       message.role === 'user'
-                        ? 'rounded-tr-none border-[#414754] bg-[#2f3542] text-[#e7ecff]'
-                        : 'rounded-tl-none border-[#adc7ff]/25 bg-[#161c28]/80 text-[#c1c6d7]'
+                        ? 'max-w-[80%] rounded-tr-none border-[#414754] bg-[#2f3542] text-[#e7ecff]'
+                        : 'max-w-[88%] rounded-tl-none border-[#adc7ff]/25 bg-[#161c28]/80 text-[#c1c6d7]'
                     }`}
                   >
                     {message.role === 'assistant' && (
@@ -272,20 +305,31 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
                         Gợi ý từ Sphere AI
                       </h3>
                     )}
-                    <p>{message.content}</p>
+                    <p className="whitespace-pre-wrap">{message.content}</p>
                   </div>
                 </div>
               ))}
+              {isSending && (
+                <div className="flex gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#4a8eff] text-[#00285b]">
+                    <span className="material-symbols-outlined animate-spin text-[19px]">progress_activity</span>
+                  </span>
+                  <div className="rounded-2xl rounded-tl-none border border-[#adc7ff]/25 bg-[#161c28]/80 px-4 py-3 font-mono text-[12px] text-[#adc7ff]">
+                    Sphere AI đang xử lý...
+                  </div>
+                </div>
+              )}
             </div>
 
-            <footer className="space-y-3 border-t border-[#414754] bg-gradient-to-t from-[#0d131f] via-[#0d131f] to-transparent p-4">
-              <div className="flex gap-2 overflow-x-auto pb-1">
+            <footer className="space-y-4 border-t border-[#414754] bg-gradient-to-t from-[#0d131f] via-[#0d131f] to-transparent p-5">
+              <div className="flex flex-wrap gap-2">
                 {suggestions.map((suggestion) => (
                   <button
                     key={suggestion}
-                    className="shrink-0 rounded-full border border-[#414754] bg-[#161c28] px-4 py-2 text-[12px] text-[#c1c6d7] transition hover:border-[#adc7ff] hover:text-[#adc7ff]"
+                    className="rounded-full border border-[#414754] bg-[#161c28] px-4 py-2 text-[12px] leading-5 text-[#c1c6d7] transition hover:border-[#adc7ff] hover:text-[#adc7ff] disabled:opacity-50"
                     type="button"
-                    onClick={() => sendMessage(suggestion)}
+                    onClick={() => void sendMessage(suggestion)}
+                    disabled={isSending}
                   >
                     {suggestion}
                   </button>
@@ -294,18 +338,24 @@ export function SphereAIButton({ className = '' }: SphereAIButtonProps) {
 
               <form className="relative" onSubmit={handleSubmit}>
                 <div className="absolute -inset-0.5 rounded-2xl bg-gradient-to-r from-[#adc7ff] to-[#24dfba] opacity-20 blur transition focus-within:opacity-40" />
-                <div className="relative flex items-center gap-2 rounded-2xl border border-[#414754] bg-[#242a37] p-2">
-                  <button className="p-3 text-[#8b90a0] transition hover:text-[#adc7ff]" type="button" aria-label="Đính kèm">
-                    <span className="material-symbols-outlined">attach_file</span>
-                  </button>
-                  <input
+                <div className="relative flex items-end gap-3 rounded-2xl border border-[#414754] bg-[#242a37] p-3">
+                  <textarea
                     ref={inputRef}
-                    className="min-w-0 flex-1 border-none bg-transparent px-2 text-[15px] text-[#e7ecff] outline-none placeholder:text-[#8b90a0] focus:ring-0"
+                    className="max-h-28 min-h-[52px] min-w-0 flex-1 resize-none border-none bg-transparent px-2 py-3 text-[15px] leading-6 text-[#e7ecff] outline-none placeholder:text-[#8b90a0] focus:ring-0"
                     placeholder="Hỏi AI..."
+                    maxLength={4000}
+                    rows={2}
+                    disabled={isSending}
                     value={input}
                     onChange={(event) => setInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }}
                   />
-                  <button className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#adc7ff] text-[#002e68] transition active:scale-95" type="submit" aria-label="Gửi">
+                  <button className="mb-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#adc7ff] text-[#002e68] transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-50" type="submit" disabled={!input.trim() || isSending} aria-label="Gửi">
                     <span className="material-symbols-outlined">send</span>
                   </button>
                 </div>

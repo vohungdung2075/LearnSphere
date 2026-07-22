@@ -1,7 +1,13 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import mongoose from "mongoose";
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+	DeleteObjectsCommand,
+	GetObjectCommand,
+	HeadObjectCommand,
+	PutObjectCommand,
+	paginateListObjectsV2,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import s3Client from "../config/s3.js";
@@ -11,6 +17,126 @@ import Enrollment from "../models/Enrollment.model.js";
 import User from "../models/User.model.js";
 
 const MB = 1024 * 1024;
+
+const getS3Bucket = () => {
+	if (!process.env.AWS_S3_BUCKET) throw new Error("S3_NOT_CONFIGURED");
+	return process.env.AWS_S3_BUCKET;
+};
+
+const throwIfDeleteFailed = (response) => {
+	if (response.Errors?.length) {
+		const failedKeys = response.Errors.map((item) => item.Key).filter(Boolean);
+		const error = new Error("S3_DELETE_FAILED");
+		error.failedKeys = failedKeys;
+		throw error;
+	}
+};
+
+export const deleteS3Objects = async (fileKeys = []) => {
+	const keys = [...new Set(fileKeys.filter((key) => typeof key === "string" && key.trim()).map((key) => key.trim()))];
+	if (!keys.length) return { deleted_count: 0 };
+
+	try {
+		let deletedCount = 0;
+		for (let index = 0; index < keys.length; index += 1000) {
+			const chunk = keys.slice(index, index + 1000);
+			const response = await s3Client.send(new DeleteObjectsCommand({
+				Bucket: getS3Bucket(),
+				Delete: {
+					Objects: chunk.map((Key) => ({ Key })),
+					Quiet: true,
+				},
+			}));
+			throwIfDeleteFailed(response);
+			deletedCount += chunk.length;
+		}
+		return { deleted_count: deletedCount };
+	} catch (error) {
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
+		const wrappedError = new Error("S3_DELETE_FAILED");
+		wrappedError.cause = error;
+		throw wrappedError;
+	}
+};
+
+export const deleteCourseS3Prefix = async (courseId) => {
+	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
+	const prefix = `courses/${courseId}/`;
+	let deletedCount = 0;
+
+	try {
+		const paginator = paginateListObjectsV2(
+			{ client: s3Client },
+			{ Bucket: getS3Bucket(), Prefix: prefix },
+		);
+
+		for await (const page of paginator) {
+			const keys = (page.Contents ?? [])
+				.map((object) => object.Key)
+				.filter((key) => typeof key === "string" && key.startsWith(prefix));
+			if (!keys.length) continue;
+
+			const response = await s3Client.send(new DeleteObjectsCommand({
+				Bucket: getS3Bucket(),
+				Delete: {
+					Objects: keys.map((Key) => ({ Key })),
+					Quiet: true,
+				},
+			}));
+			throwIfDeleteFailed(response);
+			deletedCount += keys.length;
+		}
+
+		return { deleted_count: deletedCount, prefix };
+	} catch (error) {
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
+		const wrappedError = new Error("S3_DELETE_FAILED");
+		wrappedError.cause = error;
+		throw wrappedError;
+	}
+};
+
+const validateInternalFileKey = (fileKey) => {
+	if (
+		typeof fileKey !== "string" ||
+		!fileKey.startsWith("courses/") ||
+		fileKey.includes("..") ||
+		fileKey.includes("\\")
+	) {
+		throw new Error("INVALID_FILE_KEY");
+	}
+	return fileKey;
+};
+
+export const getS3ObjectMetadata = async (fileKey) => {
+	const Key = validateInternalFileKey(fileKey);
+	try {
+		return await s3Client.send(new HeadObjectCommand({ Bucket: getS3Bucket(), Key }));
+	} catch (error) {
+		throw new Error("S3_READ_FAILED", { cause: error });
+	}
+};
+
+export const downloadS3ObjectBuffer = async (fileKey, maxBytes) => {
+	const Key = validateInternalFileKey(fileKey);
+	const metadata = await getS3ObjectMetadata(Key);
+	if (Number.isFinite(maxBytes) && metadata.ContentLength > maxBytes) throw new Error("AI_DOCUMENT_TOO_LARGE");
+
+	try {
+		const response = await s3Client.send(new GetObjectCommand({ Bucket: getS3Bucket(), Key }));
+		const bytes = await response.Body.transformToByteArray();
+		return { buffer: Buffer.from(bytes), content_type: metadata.ContentType, size: metadata.ContentLength };
+	} catch (error) {
+		if (error.message === "AI_DOCUMENT_TOO_LARGE") throw error;
+		throw new Error("S3_READ_FAILED", { cause: error });
+	}
+};
+
+export const createInternalS3DownloadUrl = async (fileKey, expiresIn = 900) => {
+	const Key = validateInternalFileKey(fileKey);
+	const command = new GetObjectCommand({ Bucket: getS3Bucket(), Key });
+	return getSignedUrl(s3Client, command, { expiresIn });
+};
 
 const uploadRules = {
 	"profile-avatars": {

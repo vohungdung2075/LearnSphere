@@ -27,6 +27,29 @@ const LessonSchema = new mongoose.Schema(
 			default: "",
 			trim: true,
 		},
+		ai_document_text: {
+			type: String,
+			default: "",
+			select: false,
+		},
+		ai_index_status: {
+			type: String,
+			enum: ["not_indexed", "processing", "ready", "partial", "failed"],
+			default: "not_indexed",
+		},
+		ai_indexed_at: {
+			type: Date,
+			default: null,
+		},
+		ai_index_error: {
+			type: String,
+			default: "",
+		},
+		ai_indexed_document_key: {
+			type: String,
+			default: "",
+			select: false,
+		},
 		order_index: {
 			type: Number,
 			required: true,

@@ -44,6 +44,18 @@ export type Lesson = {
   video_key?: string;
   document_key?: string;
   order_index: number;
+  ai_index_status?: 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
+  ai_indexed_at?: string | null;
+  ai_index_error?: string;
+};
+
+export type LessonAIIndexResult = {
+  message: string;
+  lesson_id: string;
+  status: 'ready' | 'failed';
+  indexed_at: string;
+  document_indexed: boolean;
+  issues: string[];
 };
 
 export type CourseProgress = {
@@ -83,6 +95,52 @@ export type QuestionInput = {
     content: string;
     is_correct: boolean;
   }>;
+};
+
+export type AIUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+};
+
+export type AIHistoryItem = {
+  _id: string;
+  course_id: string | null;
+  lesson_id: string | null;
+  user_message: string;
+  ai_response: string;
+  model_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  stop_reason?: string;
+  createdAt: string;
+};
+
+export type AIChatResponse = {
+  id: string;
+  reply: string;
+  model_id: string;
+  stop_reason?: string;
+  usage: AIUsage | null;
+};
+
+export type AISummaryResponse = {
+  lesson_id: string;
+  summary: string;
+  model_id: string;
+  stop_reason?: string;
+  usage: AIUsage | null;
+  ai_index_status?: Lesson['ai_index_status'];
+  ai_indexed_at?: string | null;
+  ai_index_error?: string;
+};
+
+export type AIGeneratedQuizResponse = {
+  lesson_id: string;
+  questions: QuestionInput[];
+  model_id: string;
+  usage: AIUsage | null;
 };
 
 export type QuizStart = {
@@ -228,6 +286,37 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   auth?: boolean;
 };
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  retryAfterSeconds?: number;
+
+  constructor(message: string, status: number, code?: string, retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+export function getAIErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof ApiError)) return error instanceof Error ? error.message : fallback;
+
+  if (error.status === 401) return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+  if (error.status === 403) return 'Bạn không có quyền sử dụng AI trong khóa học hoặc bài học này.';
+  if (error.code === 'AI_THROTTLED') return 'Dịch vụ AI đã hết quota hoặc đang giới hạn lưu lượng. Vui lòng thử lại sau.';
+  if (error.code === 'AI_DOCUMENT_NOT_INDEXED') return 'Backend không OCR được document của bài học. Hãy xem trạng thái học liệu và kiểm tra PDF có bị lỗi hoặc đặt mật khẩu hay không.';
+  if (error.code === 'AI_INDEX_IN_PROGRESS') return 'AI đang xử lý file bài học. Vui lòng đợi hoàn tất rồi thử lại.';
+  if (error.code === 'AI_FILES_NOT_INDEXED') return 'Giảng viên cần tóm tắt học liệu bằng AI ít nhất một lần trước khi học viên sử dụng.';
+	if (error.code === 'LESSON_DOCUMENT_REQUIRED') return 'Bài học cần có document để tạo bản tóm tắt.';
+  if (error.code === 'AI_RATE_LIMITED') {
+    return `Bạn đã gửi quá nhiều yêu cầu AI. Vui lòng thử lại sau ${error.retryAfterSeconds ?? 60} giây.`;
+  }
+
+  return error.message || fallback;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const TOKEN_KEY = 'learnsphere_access_token';
 const USER_KEY = 'learnsphere_user';
@@ -287,7 +376,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    throw new Error(data?.message ?? data?.detail ?? `Request failed with status ${response.status}`);
+    throw new ApiError(
+      data?.message ?? data?.detail ?? `Request failed with status ${response.status}`,
+      response.status,
+      data?.code,
+      data?.retry_after_seconds,
+    );
   }
 
   return data as T;
@@ -346,6 +440,17 @@ export const api = {
   restoreCourse(courseId: string) {
     return request<{ message: string; course: Course }>(`/courses/${courseId}/restore`, {
       method: 'PATCH',
+    });
+  },
+
+  permanentlyDeleteCourse(courseId: string) {
+    return request<{
+      message: string;
+      course_id: string;
+      deleted_s3_objects: number;
+      deleted_records: Record<string, number>;
+    }>(`/courses/${courseId}/permanent`, {
+      method: 'DELETE',
     });
   },
 
@@ -411,6 +516,12 @@ export const api = {
     });
   },
 
+  indexLessonForAI(lessonId: string) {
+    return request<LessonAIIndexResult>(`/lessons/${lessonId}/ai-index`, {
+      method: 'POST',
+    });
+  },
+
   deleteLesson(lessonId: string) {
     return request<{ message: string }>(`/lessons/${lessonId}`, {
       method: 'DELETE',
@@ -425,6 +536,45 @@ export const api = {
 
   getCourseProgress(courseId: string) {
     return request<CourseProgress>(`/courses/${courseId}/progress`);
+  },
+
+  chatWithAI(body: { message: string; course_id?: string; lesson_id?: string }) {
+    return request<AIChatResponse>('/ai/chat', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  summarizeLesson(lessonId: string) {
+    return request<AISummaryResponse>(`/ai/summarize-lesson/${lessonId}`, {
+      method: 'POST',
+    });
+  },
+
+  generateQuizWithAI(body: { lesson_id: string; number_of_questions: number }) {
+    return request<AIGeneratedQuizResponse>('/ai/generate-quiz', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  getAIHistory(filters: { course_id?: string; lesson_id?: string; limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (filters.course_id) params.set('course_id', filters.course_id);
+    if (filters.lesson_id) params.set('lesson_id', filters.lesson_id);
+    if (filters.limit) params.set('limit', String(filters.limit));
+    const query = params.toString();
+    return request<{ items: AIHistoryItem[] }>(`/ai/history${query ? `?${query}` : ''}`);
+  },
+
+  deleteAIHistory(filters: { course_id?: string; lesson_id?: string } = {}) {
+    const params = new URLSearchParams();
+    if (filters.course_id) params.set('course_id', filters.course_id);
+    if (filters.lesson_id) params.set('lesson_id', filters.lesson_id);
+    const query = params.toString();
+    return request<{ message: string; deleted_count: number }>(`/ai/history${query ? `?${query}` : ''}`, {
+      method: 'DELETE',
+    });
   },
 
   getCourseQuizzes(courseId: string) {

@@ -1,5 +1,5 @@
 import express from "express";
-import { handleCreateCourse, handleGetAllCourses, handleGetCourseById, handleUpdateCourse, handleDeleteCourse, handleGetDeletedCourses, handleRestoreCourse } from "../controllers/course.controller.js";
+import { handleCreateCourse, handleGetAllCourses, handleGetCourseById, handleUpdateCourse, handleDeleteCourse, handleGetDeletedCourses, handleRestoreCourse, handlePermanentlyDeleteCourse } from "../controllers/course.controller.js";
 import { handleEnrollCourse, handleUnenrollCourse, handleGetCourseEnrollments, handleApproveEnrollment, handleRejectEnrollment } from "../controllers/enrollment.controller.js";
 import { handleCreateLesson, handleGetCourseLessons, handleGetCourseProgress } from "../controllers/lesson.controller.js";
 import { handleCreateQuiz, handleGetCourseQuizzes } from "../controllers/quiz.controller.js";
@@ -16,6 +16,7 @@ router.post("/", protect, authorize("tutor", "admin"), handleCreateCourse);
 router.put("/:course_id", protect, authorize("tutor", "admin"), handleUpdateCourse);
 router.delete("/:course_id", protect, authorize("tutor", "admin"), handleDeleteCourse);
 router.patch("/:course_id/restore", protect, authorize("tutor", "admin"), handleRestoreCourse);
+router.delete("/:course_id/permanent", protect, authorize("tutor", "admin"), handlePermanentlyDeleteCourse);
 
 router.post("/:course_id/enroll", protect, authorize("student"), handleEnrollCourse);
 router.delete("/:course_id/enroll", protect, authorize("student"), handleUnenrollCourse);

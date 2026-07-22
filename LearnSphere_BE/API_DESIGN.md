@@ -148,6 +148,39 @@ Response:
 
 Sau khi đặt lại mật khẩu thành công, reset token bị xóa và không thể sử dụng lại. Hệ thống đồng thời tăng `token_version`, vì vậy tất cả access token được cấp trước thời điểm reset mật khẩu đều bị thu hồi và nhận `401 Unauthorized` ở request tiếp theo.
 
+### 5.4. Lịch sử hội thoại
+
+Lấy tối đa 100 lượt chat của chính user trong một ngữ cảnh. Không truyền `course_id`/`lesson_id` nghĩa là hội thoại chung.
+
+```http
+GET /api/ai/history?course_id={course_id}&lesson_id={lesson_id}&limit=50
+```
+
+```json
+{
+	"items": [
+		{
+			"_id": "6870f8c90db5248718eb7001",
+			"user_message": "EC2 là gì?",
+			"ai_response": "EC2 là dịch vụ máy chủ ảo...",
+			"model_id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+			"input_tokens": 250,
+			"output_tokens": 100,
+			"total_tokens": 350,
+			"createdAt": "2026-07-22T05:00:00.000Z"
+		}
+	]
+}
+```
+
+Xóa lịch sử của chính user trong ngữ cảnh được chọn:
+
+```http
+DELETE /api/ai/history?course_id={course_id}&lesson_id={lesson_id}
+```
+
+Không truyền query sẽ chỉ xóa hội thoại chung, không xóa lịch sử thuộc các khóa học.
+
 ### Error response thường gặp
 
 ```json
@@ -375,7 +408,7 @@ Các trường đều có thể cập nhật độc lập.
 
 ### 2.5. Xóa mềm khóa học
 
-Dành cho tutor sở hữu khóa học hoặc admin. Dữ liệu không bị xóa khỏi MongoDB mà được chuyển vào thùng rác.
+Dành cho tutor sở hữu khóa học hoặc admin. Dữ liệu không bị xóa khỏi MongoDB mà được chuyển vào thùng rác. File S3 vẫn được giữ trong giai đoạn này để khóa học có thể khôi phục.
 
 Không thể xóa course khi còn quiz attempt `in_progress` chưa hết hạn trong course đó.
 
@@ -439,6 +472,45 @@ Response:
 	}
 }
 ```
+
+### 2.7.1. Xóa vĩnh viễn khóa học trong thùng rác
+
+Dành cho tutor sở hữu khóa học hoặc admin. Backend xóa toàn bộ object thuộc prefix `courses/{course_id}/` trên S3 trước, sau đó xóa course cùng lesson, progress, enrollment, quiz, attempt, discussion và lịch sử AI liên quan khỏi MongoDB. Nếu S3 trả lỗi, API trả `502` và khóa học vẫn nằm trong thùng rác để có thể thử lại.
+
+```http
+DELETE /api/courses/{course_id}/permanent
+Authorization: Bearer <access_token>
+```
+
+Response:
+
+```json
+{
+	"message": "Course, related data, and S3 files permanently deleted",
+	"course_id": "6870f8c90db5248718eb6e31",
+	"deleted_s3_objects": 4,
+	"deleted_records": {
+		"enrollments": 10,
+		"lessons": 3,
+		"lesson_progress": 25,
+		"quizzes": 2,
+		"quiz_attempts": 12,
+		"discussions": 5,
+		"ai_messages": 8
+	}
+}
+```
+
+Có thể bật dọn thùng rác tự động bằng các biến môi trường sau:
+
+```env
+COURSE_CLEANUP_ENABLED=true
+COURSE_TRASH_RETENTION_DAYS=30
+COURSE_CLEANUP_INTERVAL_MINUTES=360
+COURSE_CLEANUP_BATCH_SIZE=20
+```
+
+Scheduler mặc định tắt để tránh xóa dữ liệu ngoài ý muốn. Khi bật, mỗi lượt chỉ xử lý tối đa `COURSE_CLEANUP_BATCH_SIZE` khóa học đã quá thời hạn giữ.
 
 ### 2.8. Student đăng ký khóa học
 
@@ -825,7 +897,7 @@ Response:
 
 ### 3.7. Xóa bài học
 
-Dành cho tutor sở hữu course hoặc admin. Lesson bị xóa cứng và tất cả progress liên quan cũng bị xóa.
+Dành cho tutor sở hữu course hoặc admin. Lesson bị xóa cứng, tất cả progress liên quan bị xóa, đồng thời `video_key` và `document_key` tương ứng được xóa khỏi S3. Backend chỉ xóa dữ liệu MongoDB sau khi S3 xóa thành công; nếu S3 lỗi, API trả `502` và lesson vẫn được giữ để có thể thử lại.
 
 ```http
 DELETE /api/lessons/{lesson_id}
@@ -836,9 +908,34 @@ Response:
 
 ```json
 {
-	"message": "Lesson deleted successfully"
+	"message": "Lesson and S3 files deleted successfully",
+	"deleted_s3_objects": 2
 }
 ```
+
+### 3.8. Phân tích document bài học cho AI
+
+Dành cho tutor sở hữu course hoặc admin. Endpoint tải PDF/DOCX từ S3 để trích xuất văn bản. Kết quả được lưu trong Lesson và được tái sử dụng cho chat, tóm tắt và sinh quiz; học sinh không cần xử lý lại document ở mỗi câu hỏi. Video bài học chỉ dùng để phát, không được gửi tới AI và không được nhận dạng lời thoại.
+
+```http
+POST /api/lessons/{lesson_id}/ai-index
+Authorization: Bearer <access_token>
+```
+
+Response:
+
+```json
+{
+	"message": "Lesson files processed for AI",
+	"lesson_id": "6870f8c90db5248718eb6f01",
+	"status": "ready",
+	"indexed_at": "2026-07-22T08:00:00.000Z",
+	"document_indexed": true,
+	"issues": []
+}
+```
+
+`status` có thể là `ready` hoặc `failed`. Khi thay `document_key`, chỉ mục cũ tự động bị xóa và trạng thái trở về `not_indexed`; thay video không ảnh hưởng chỉ mục AI. Với PDF scan không có lớp chữ, backend tự render tối đa `AI_PDF_OCR_MAX_PAGES` trang và dùng Tesseract.js với dữ liệu tiếng Việt để OCR cục bộ, không tiêu quota AI provider.
 
 ### Error response thường gặp
 
@@ -1398,9 +1495,7 @@ Response:
 
 ## 5. AI API
 
-Project có phần AI hỗ trợ học tập và OpenAI API.
-
-> Trạng thái: Dự kiến triển khai, các endpoint trong phần này chưa được mount trong backend hiện tại.
+Module AI hỗ trợ chọn provider bằng biến môi trường, hiện gồm Amazon Bedrock và Groq. Tất cả endpoint yêu cầu Bearer token; quyền truy cập course/lesson vẫn được kiểm tra ở backend. Việc đổi provider không làm thay đổi API frontend hoặc cấu trúc `AIMessage`.
 
 ### 5.1. Chat với AI
 
@@ -1422,11 +1517,22 @@ Response:
 
 ```json
 {
-	"reply": "EC2 là dịch vụ máy chủ ảo của AWS..."
+	"id": "6870f8c90db5248718eb7001",
+	"reply": "EC2 là dịch vụ máy chủ ảo của AWS...",
+	"model_id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+	"usage": {
+		"input_tokens": 250,
+		"output_tokens": 100,
+		"total_tokens": 350
+	}
 }
 ```
 
-### 5.2. AI tóm tắt bài học
+`course_id` và `lesson_id` là tùy chọn. Nếu có ngữ cảnh khóa học, student phải có enrollment `active`; tutor phải là người tạo course. Sáu lượt chat gần nhất trong cùng ngữ cảnh được gửi kèm và câu trả lời thành công được lưu vào `AIMessage`.
+
+### 5.2. AI tóm tắt document bài học
+
+Endpoint chỉ sử dụng nội dung trích xuất từ document, không sử dụng nội dung mô tả hoặc video. Nếu document chưa được lập chỉ mục, endpoint tự xử lý trước rồi mới tạo bản tóm tắt chi tiết. Bài học không có document trả `409 LESSON_DOCUMENT_REQUIRED`.
 
 ```http
 POST /api/ai/summarize-lesson/{lesson_id}
@@ -1443,7 +1549,7 @@ Response:
 
 ### 5.3. AI tạo câu hỏi quiz
 
-Dành cho `admin`.
+Dành cho `tutor` sở hữu course hoặc `admin`. Endpoint chỉ trả bản nháp, không tự lưu vào quiz. Nếu lesson có document chưa được lập chỉ mục, backend tự xử lý document trước khi gọi model. Khi lesson có document nhưng không trích xuất được chữ, endpoint trả `422 AI_DOCUMENT_NOT_INDEXED` thay vì âm thầm sinh câu hỏi chỉ từ phần mô tả bài học. Video không được gửi tới AI.
 
 ```http
 POST /api/ai/generate-quiz
@@ -1465,6 +1571,8 @@ Response:
 	"questions": [
 		{
 			"content": "EC2 là gì?",
+			"question_type": "single_choice",
+			"point": 1,
 			"answers": [
 				{
 					"content": "Dịch vụ máy chủ ảo",
@@ -1484,15 +1592,55 @@ Response:
 
 ```json
 {
-	"detail": "AI service unavailable"
+	"message": "AI provider quota exceeded; please try again later",
+	"code": "AI_THROTTLED"
 }
 ```
 
 ```text
 400 Bad Request
 401 Unauthorized
-500 Internal Server Error
+403 Forbidden
+404 Not Found
+409 Conflict
+413 Payload Too Large
+429 Too Many Requests
+502 Bad Gateway
+503 Service Unavailable
 ```
+
+### 5.5. Cấu hình AI provider và rate limit
+
+Chọn Groq Free Plan:
+
+```env
+AI_PROVIDER=groq
+GROQ_API_KEY=gsk_xxxxxxxxx
+GROQ_MODEL=llama-3.3-70b-versatile
+AI_DOCUMENT_MAX_BYTES=20971520
+AI_INDEX_MAX_CHARS=200000
+AI_PDF_OCR_MAX_PAGES=20
+AI_PDF_OCR_MIN_TEXT_CHARS=200
+AI_RATE_LIMIT_REQUESTS=10
+AI_RATE_LIMIT_WINDOW_MS=60000
+```
+
+API key chỉ được lưu trong environment của backend, không đưa vào frontend hoặc commit lên Git. Backend dùng `fetch` có sẵn và thư viện trích xuất PDF yêu cầu Node.js 20.16 trở lên; không cần cài thêm Groq SDK.
+
+Để chuyển lại Amazon Bedrock, chỉ cần đổi cấu hình:
+
+
+```env
+AI_PROVIDER=bedrock
+BEDROCK_REGION=ap-southeast-1
+BEDROCK_MODEL_ID=global.anthropic.claude-haiku-4-5-20251001-v1:0
+AI_RATE_LIMIT_REQUESTS=10
+AI_RATE_LIMIT_WINDOW_MS=60000
+```
+
+Nếu không khai báo `AI_PROVIDER`, backend mặc định dùng `bedrock` để tương thích cấu hình cũ. Bedrock dùng credential chain mặc định của AWS SDK; khi deploy nên gắn IAM role cho compute service và IAM principal cần tối thiểu `bedrock:InvokeModel`.
+
+Các endpoint gọi model được giới hạn theo user; mặc định 10 request trong 60 giây và trả `AI_RATE_LIMITED` kèm `Retry-After` khi vượt giới hạn. Giới hạn in-memory phù hợp một backend instance; khi scale nhiều instance cần chuyển state sang Redis. Khi provider hết quota, endpoint trả `429` với code `AI_THROTTLED`.
 
 ---
 
@@ -1673,6 +1821,7 @@ Hai endpoint avatar chỉ thao tác trên avatar của chính user đang đăng 
 | `DELETE /api/courses/{course_id}` | Tutor sở hữu course hoặc `admin` |
 | `GET /api/courses/mine/deleted` | `tutor`, `admin` |
 | `PATCH /api/courses/{course_id}/restore` | Tutor sở hữu course hoặc `admin` |
+| `DELETE /api/courses/{course_id}/permanent` | Tutor sở hữu course hoặc `admin` |
 | `POST /api/courses/{course_id}/enroll` | `student` |
 | `DELETE /api/courses/{course_id}/enroll` | `student` |
 | `GET /api/users/me/courses` | `student` |
@@ -1699,6 +1848,7 @@ Tài khoản tutor mới đăng ký có `account_status = pending`. Admin phải
 | `POST /api/courses/{course_id}/lessons` | Tutor sở hữu course hoặc `admin` |
 | `PUT /api/lessons/{lesson_id}` | Tutor sở hữu course hoặc `admin` |
 | `DELETE /api/lessons/{lesson_id}` | Tutor sở hữu course hoặc `admin` |
+| `POST /api/lessons/{lesson_id}/ai-index` | Tutor sở hữu course hoặc `admin` |
 | `POST /api/lessons/{lesson_id}/complete` | Student enrollment active |
 | `GET /api/courses/{course_id}/progress` | Student enrollment active |
 
@@ -1728,6 +1878,8 @@ Tài khoản tutor mới đăng ký có `account_status = pending`. Admin phải
 | `GET /api/files/presigned-download` | Student enrollment active, tutor sở hữu course hoặc `admin` |
 | `POST /api/files/profile-avatar/presigned-upload` | Mọi tài khoản đăng nhập đang active, chỉ cho chính mình |
 | `GET /api/files/profile-avatar` | Mọi tài khoản đăng nhập đang active, chỉ đọc avatar của chính mình |
+
+Để dọn file khóa học, IAM principal của backend cần `s3:ListBucket` trên bucket với prefix `courses/*` và `s3:DeleteObject` trên `arn:aws:s3:::<bucket>/courses/*`. Nếu bucket bật S3 Versioning, thao tác hiện tại xóa phiên bản hiện hành/tạo delete marker; cần thêm chính sách Lifecycle hoặc cơ chế xóa version riêng để giải phóng dung lượng của các version cũ.
 
 ---
 

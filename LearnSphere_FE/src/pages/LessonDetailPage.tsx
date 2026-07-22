@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
-import { api, getStoredUser, type CourseDiscussion, type CourseProgress, type Lesson } from '../services/api';
+import { api, getAIErrorMessage, getStoredUser, type AISummaryResponse, type CourseDiscussion, type CourseProgress, type Lesson } from '../services/api';
 
 const avatarSrc =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuBoBuRJI1yShmJcMfHY1XLGNg58oqoS5MyV6HQICcczCWG7fu-lzanV_5ir_WBXQB19zta9onD5oKMvRyXiRpCjARwoUGMeyA0WX3cZa4UuBn_ZNEIt7g-llR2NmJcFr5na00oENmk4NouYphWdHgtSlu0awtCw8ILcImQS45sYgmsPBdDBehw';
@@ -13,6 +13,74 @@ function getRoleLabel(role?: string) {
   if (role === 'tutor') return 'Giảng viên';
   if (role === 'student') return 'Học viên';
   return 'Khách';
+}
+
+function renderSummaryInline(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|<sub>[^<]*<\/sub>|<sup>[^<]*<\/sup>)/gi).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${part}-${index}`} className="font-semibold text-[#f0f4ff]">{renderSummaryInline(part.slice(2, -2))}</strong>;
+    }
+    const subscript = part.match(/^<sub>([^<]*)<\/sub>$/i);
+    if (subscript) {
+      return <sub key={`${part}-${index}`} className="text-[0.72em] leading-none">{subscript[1]}</sub>;
+    }
+    const superscript = part.match(/^<sup>([^<]*)<\/sup>$/i);
+    if (superscript) {
+      return <sup key={`${part}-${index}`} className="text-[0.72em] leading-none">{superscript[1]}</sup>;
+    }
+    return <Fragment key={`${part}-${index}`}>{part}</Fragment>;
+  });
+}
+
+function SummaryContent({ content }: { content: string }) {
+  return (
+    <div className="space-y-2 break-words text-[15px] leading-7 text-[#d8e0f2] md:text-[16px]">
+      {content.replace(/\r\n/g, '\n').split('\n').map((rawLine, index) => {
+        const line = rawLine.trim();
+        if (!line) return <div key={`space-${index}`} className="h-1" />;
+
+        const heading = line.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+          return (
+            <h3 key={`heading-${index}`} className="mb-2 mt-5 text-[19px] font-bold leading-7 text-[#adc7ff] first:mt-0 md:text-[21px]">
+              {renderSummaryInline(heading[2])}
+            </h3>
+          );
+        }
+
+        if (/^\*\*[^*]+\*\*$/.test(line)) {
+          return (
+            <h3 key={`bold-heading-${index}`} className="mb-2 mt-5 text-[19px] font-bold leading-7 text-[#adc7ff] first:mt-0 md:text-[21px]">
+              {line.slice(2, -2)}
+            </h3>
+          );
+        }
+
+        const bullet = rawLine.match(/^(\s*)[-*+]\s+(.+)$/);
+        if (bullet) {
+          const nested = bullet[1].length >= 2;
+          return (
+            <div key={`bullet-${index}`} className={`flex items-start gap-3 ${nested ? 'ml-6' : ''}`}>
+              <span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#24dfba]" />
+              <p className="min-w-0 flex-1">{renderSummaryInline(bullet[2])}</p>
+            </div>
+          );
+        }
+
+        const ordered = line.match(/^(\d+)[.)]\s+(.+)$/);
+        if (ordered) {
+          return (
+            <div key={`ordered-${index}`} className="flex items-start gap-3">
+              <span className="min-w-6 font-mono font-bold text-[#24dfba]">{ordered[1]}.</span>
+              <p className="min-w-0 flex-1">{renderSummaryInline(ordered[2])}</p>
+            </div>
+          );
+        }
+
+        return <p key={`paragraph-${index}`}>{renderSummaryInline(line)}</p>;
+      })}
+    </div>
+  );
 }
 
 export function LessonDetailPage() {
@@ -33,7 +101,13 @@ export function LessonDetailPage() {
   const [isSendingDiscussion, setIsSendingDiscussion] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(courseId || lessonId));
   const [message, setMessage] = useState('');
+  const [summary, setSummary] = useState<AISummaryResponse | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const activeCourseId = useMemo(() => courseId ?? lesson?.course_id ?? '', [courseId, lesson?.course_id]);
+
+  useEffect(() => {
+    setSummary(null);
+  }, [lesson?._id]);
 
   useEffect(() => {
     if (!courseId) return;
@@ -195,6 +269,28 @@ export function LessonDetailPage() {
     }
   }
 
+  async function handleSummarizeLesson() {
+    if (!lesson?._id || isSummarizing) return;
+
+    setIsSummarizing(true);
+    setMessage('');
+    setSummary(null);
+    try {
+      const result = await api.summarizeLesson(lesson._id);
+      setSummary(result);
+      setLesson((current) => current ? {
+        ...current,
+        ai_index_status: result.ai_index_status ?? current.ai_index_status,
+        ai_indexed_at: result.ai_indexed_at ?? current.ai_indexed_at,
+        ai_index_error: result.ai_index_error ?? '',
+      } : current);
+    } catch (error) {
+      setMessage(getAIErrorMessage(error, 'Không thể tóm tắt bài học bằng AI.'));
+    } finally {
+      setIsSummarizing(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#070d19] text-[#e7ecff] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
@@ -227,7 +323,22 @@ export function LessonDetailPage() {
 
           {lesson && (
             <>
-              <h1 className="text-[30px] font-semibold leading-10 text-[#e7ecff] md:text-[34px]">{lesson.title}</h1>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h1 className="text-[30px] font-semibold leading-10 text-[#e7ecff] md:text-[34px]">{lesson.title}</h1>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-[#adc7ff]/40 bg-[#adc7ff]/10 px-5 py-3 font-bold text-[#adc7ff] transition hover:bg-[#adc7ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    type="button"
+                    disabled={isSummarizing || !lesson.document_key}
+                    onClick={() => void handleSummarizeLesson()}
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${isSummarizing ? 'animate-spin' : ''}`}>
+                      {isSummarizing ? 'progress_activity' : 'auto_awesome'}
+                    </span>
+                    {isSummarizing ? 'AI đang đọc document...' : 'Tóm tắt document bằng AI'}
+                  </button>
+                </div>
+              </div>
 
               <section className="overflow-hidden rounded-xl border border-[#414754] bg-[#080e1a] shadow-[0_0_40px_-10px_rgba(74,142,255,0.35)]">
                 <div className="relative aspect-video bg-[radial-gradient(circle_at_50%_35%,rgba(74,142,255,0.28),transparent_34%),linear-gradient(135deg,#080e1a,#1a202c)]">
@@ -279,6 +390,21 @@ export function LessonDetailPage() {
                   <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                 </a>
               </div>
+
+              {summary && (
+                <section className="rounded-xl border border-[#24dfba]/30 bg-[#24dfba]/5 p-6 shadow-xl shadow-black/15">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h2 className="flex items-center gap-2 text-[21px] font-semibold text-[#24dfba]">
+                      <span className="material-symbols-outlined">auto_awesome</span>
+                      Tóm tắt bởi Sphere AI
+                    </h2>
+                    <span className="font-mono text-[10px] text-[#738098]">
+                      AI đã xử lý {(summary.usage?.total_tokens ?? 0).toLocaleString('vi-VN')} token
+                    </span>
+                  </div>
+                  <SummaryContent content={summary.summary} />
+                </section>
+              )}
 
               <article className="rounded-xl border border-[#414754] bg-[#1a202c] p-6 shadow-xl shadow-black/20 md:p-8">
                 <h2 className="mb-3 text-[24px] font-semibold text-[#adc7ff]">Nội dung bài học</h2>
@@ -508,6 +634,33 @@ export function LessonDetailPage() {
                   <span className="material-symbols-outlined text-[16px]">link</span>
                   Resources
                 </h2>
+                {lesson?.document_key && (
+                  <div className="mb-4 rounded-xl border border-[#adc7ff]/25 bg-[#adc7ff]/5 p-3">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-[#adc7ff]">
+                      <span className={`material-symbols-outlined text-[18px] ${lesson.ai_index_status === 'processing' ? 'animate-spin' : ''}`}>
+                        {lesson.ai_index_status === 'ready'
+                          ? 'check_circle'
+                          : lesson.ai_index_status === 'partial'
+                            ? 'warning'
+                            : lesson.ai_index_status === 'failed'
+                              ? 'error'
+                              : lesson.ai_index_status === 'processing'
+                                ? 'progress_activity'
+                                : 'smart_toy'}
+                      </span>
+					  {lesson.ai_index_status === 'ready'
+						? 'AI đã đọc document'
+						: lesson.ai_index_status === 'partial'
+						  ? 'AI mới đọc được một phần document'
+						  : lesson.ai_index_status === 'failed'
+							? 'AI chưa xử lý được document'
+							: lesson.ai_index_status === 'processing'
+							  ? 'AI đang xử lý document'
+							  : 'Document chưa được phân tích cho AI'}
+                    </div>
+                    {lesson.ai_index_error && <p className="mt-2 text-[12px] leading-5 text-[#ffb4ab]">{lesson.ai_index_error}</p>}
+                  </div>
+                )}
                 <div className="space-y-3">
                   <button
                     className="flex w-full items-center gap-3 rounded-xl border border-[#24dfba]/30 bg-[#24dfba]/10 px-4 py-4 text-left transition hover:bg-[#24dfba]/16 disabled:cursor-not-allowed disabled:border-[#414754] disabled:bg-[#0d131f] disabled:opacity-60"
@@ -558,7 +711,7 @@ export function LessonDetailPage() {
         </div>
       </main>
 
-      <SphereAIButton />
+      <SphereAIButton href={`/ai-assistant?course_id=${encodeURIComponent(activeCourseId)}${lesson?._id ? `&lesson_id=${encodeURIComponent(lesson._id)}` : ''}`} />
     </div>
   );
 }
