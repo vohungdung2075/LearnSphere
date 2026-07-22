@@ -22,6 +22,8 @@ export function LockedCoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [courseToRestore, setCourseToRestore] = useState<Course | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   async function loadDeletedCourses() {
     if (!canManageContent(user)) return;
@@ -42,16 +44,18 @@ export function LockedCoursesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?._id, user?.role]);
 
-  async function handleRestore(courseId: string) {
-    const confirmed = window.confirm('Mở khóa khóa học này và đưa trở lại danh sách chính?');
-    if (!confirmed) return;
-
+  async function handleRestore() {
+    if (!courseToRestore) return;
+    setIsRestoring(true);
     try {
-      const result = await api.restoreCourse(courseId);
+      const result = await api.restoreCourse(courseToRestore._id);
       setMessage(result.message);
+      setCourseToRestore(null);
       await loadDeletedCourses();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể mở khóa khóa học');
+    } finally {
+      setIsRestoring(false);
     }
   }
 
@@ -75,6 +79,62 @@ export function LockedCoursesPage() {
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/locked-courses" items={navItems} user={user} />
       <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
+
+      {courseToRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <section className="w-full max-w-[520px] rounded-2xl border border-[#354055] bg-[#111827] p-5 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#24dfba]/30 bg-[#24dfba]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-[#24dfba]">
+                  <span className="material-symbols-outlined text-[16px]">lock_open</span>
+                  Mở khóa
+                </span>
+                <h2 className="mt-4 text-[24px] font-extrabold text-white">Mở khóa khóa học này?</h2>
+                <p className="mt-2 text-[14px] leading-6 text-[#b8c1d6]">{courseToRestore.title}</p>
+              </div>
+              <button
+                className="rounded-lg border border-[#354055] p-2 text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                onClick={() => {
+                  if (!isRestoring) setCourseToRestore(null);
+                }}
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-[#354055] bg-[#070d19] p-3">
+              <p className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Lý do khóa hiện tại</p>
+              <p className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6 text-[#e7ecff]">
+                {courseToRestore.deleted_reason || 'Chưa có lý do khóa.'}
+              </p>
+            </div>
+
+            <p className="mt-4 text-[14px] leading-6 text-[#b8c1d6]">
+              Sau khi mở khóa, khóa học sẽ quay lại danh sách khóa học chính và người học có thể truy cập lại nội dung.
+            </p>
+
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-xl border border-[#354055] px-5 py-3 font-mono text-[12px] font-bold text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                disabled={isRestoring}
+                onClick={() => setCourseToRestore(null)}
+              >
+                Hủy
+              </button>
+              <button
+                className="rounded-xl bg-[#24dfba] px-5 py-3 font-mono text-[12px] font-black uppercase tracking-wide text-[#00382c] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={isRestoring}
+                onClick={() => void handleRestore()}
+              >
+                {isRestoring ? 'Đang mở khóa...' : 'Mở khóa'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <main className="mx-auto max-w-[1180px] space-y-5 px-4 py-6 md:pl-64 md:pr-6">
         <section className="flex flex-col justify-between gap-4 rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:flex-row md:items-end">
@@ -129,7 +189,7 @@ export function LockedCoursesPage() {
                     </p>
                   </div>
                   {user?.role === 'admin' && (
-                    <button className="mt-5 rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => void handleRestore(course._id)}>
+                    <button className="mt-5 rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => setCourseToRestore(course)}>
                       Mở khóa
                     </button>
                   )}
