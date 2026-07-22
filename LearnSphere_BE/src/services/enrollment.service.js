@@ -32,8 +32,8 @@ export const enrollCourse = async (courseId, studentId) => {
 			type: "enrollment",
 			title: "Có yêu cầu đăng ký mới",
 			message: `Một học viên vừa gửi yêu cầu tham gia khóa học "${course.title}".`,
-			link: `/courses`,
-			metadata: { course_id: courseId, enrollment_id: enrollment._id },
+			link: `/lesson-management?course_id=${courseId}`,
+			metadata: { action: "review_enrollment", course_id: courseId, enrollment_id: enrollment._id },
 		});
 	} else {
 		await createNotification({
@@ -42,7 +42,7 @@ export const enrollCourse = async (courseId, studentId) => {
 			title: "Đăng ký khóa học thành công",
 			message: `Bạn đã được ghi danh vào khóa học "${course.title}".`,
 			link: `/lesson-detail?course_id=${courseId}`,
-			metadata: { course_id: courseId, enrollment_id: enrollment._id },
+			metadata: { action: "start_learning", course_id: courseId, enrollment_id: enrollment._id },
 		});
 	}
 
@@ -127,7 +127,7 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 		title: "Yêu cầu đăng ký đã được duyệt",
 		message: `Bạn đã được duyệt vào khóa học "${course.title}".`,
 		link: `/lesson-detail?course_id=${courseId}`,
-		metadata: { course_id: courseId, enrollment_id: enrollment._id },
+		metadata: { action: "start_learning", course_id: courseId, enrollment_id: enrollment._id },
 	});
 
 	return enrollment;
@@ -158,8 +158,8 @@ export const rejectEnrollment = async (courseId, enrollmentId, userId, userRole)
 		type: "enrollment",
 		title: "Yêu cầu đăng ký bị từ chối",
 		message: `Yêu cầu tham gia khóa học "${course.title}" của bạn chưa được chấp nhận.`,
-		link: `/courses`,
-		metadata: { course_id: courseId, enrollment_id: enrollmentId },
+		link: `/my-courses`,
+		metadata: { action: "view_my_courses", course_id: courseId, enrollment_id: enrollmentId },
 	});
 
 	return { message: "Enrollment request rejected successfully" };

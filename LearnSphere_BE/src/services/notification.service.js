@@ -1,7 +1,21 @@
 import mongoose from "mongoose";
 import Notification from "../models/Notification.model.js";
+import User from "../models/User.model.js";
 
 const MAX_LIMIT = 50;
+
+function resolveNotificationLink(notification, recipientRole) {
+	if (
+		notification.type === "enrollment" &&
+		notification.link === "/courses" &&
+		notification.metadata?.course_id
+	) {
+		if (recipientRole === "student") return "/my-courses";
+		return `/lesson-management?course_id=${notification.metadata.course_id}`;
+	}
+
+	return notification.link;
+}
 
 export const createNotification = async ({ recipient_id, type = "system", title, message, link = "", metadata = {} }) => {
 	if (!recipient_id || !title || !message) return null;
@@ -19,14 +33,22 @@ export const createNotification = async ({ recipient_id, type = "system", title,
 export const getMyNotifications = async (userId, { limit = 20 } = {}) => {
 	const selectedLimit = Math.min(Math.max(Number(limit) || 20, 1), MAX_LIMIT);
 
-	const [items, unreadCount] = await Promise.all([
+	const [items, unreadCount, recipient] = await Promise.all([
 		Notification.find({ recipient_id: userId })
 			.sort({ createdAt: -1 })
-			.limit(selectedLimit),
+			.limit(selectedLimit)
+			.lean(),
 		Notification.countDocuments({ recipient_id: userId, read_at: null }),
+		User.findById(userId).select("role").lean(),
 	]);
 
-	return { items, unread_count: unreadCount };
+	return {
+		items: items.map((item) => ({
+			...item,
+			link: resolveNotificationLink(item, recipient?.role),
+		})),
+		unread_count: unreadCount,
+	};
 };
 
 export const markNotificationAsRead = async (userId, notificationId) => {
