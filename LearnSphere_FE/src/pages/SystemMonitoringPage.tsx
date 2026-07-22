@@ -124,7 +124,7 @@ export function SystemMonitoringPage() {
               <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#24dfba]">Admin control center</p>
               <h1 className="text-[32px] font-semibold tracking-tight">Giám sát Hệ thống</h1>
               <p className="mt-2 max-w-2xl text-[14px] leading-6 text-[#8b90a0]">
-                Tổng quan lưu lượng API, tài khoản, nội dung học tập và tài nguyên lưu trữ.
+                Tổng quan hoạt động hệ thống, tài khoản, nội dung học tập và tài nguyên lưu trữ.
               </p>
             </div>
             <button
@@ -150,8 +150,8 @@ export function SystemMonitoringPage() {
           {stats && (
             <>
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <MetricCard icon="ads_click" label="API hôm nay" value={formatNumber(stats.traffic.today_requests)} detail={`${formatNumber(stats.traffic.total_requests)} request đã ghi nhận`} tone="bg-[#adc7ff]/10 text-[#adc7ff]" />
-                <MetricCard icon="verified_user" label="User hoạt động" value={formatNumber(stats.users.active)} detail={`${formatNumber(stats.users.total)} tài khoản toàn hệ thống`} tone="bg-[#24dfba]/10 text-[#24dfba]" />
+                <MetricCard icon="ads_click" label="Hoạt động hôm nay" value={formatNumber(stats.traffic.today_requests)} detail={`${formatNumber(stats.traffic.total_requests)} lượt xử lý đã ghi nhận`} tone="bg-[#adc7ff]/10 text-[#adc7ff]" />
+                <MetricCard icon="verified_user" label="Người dùng hoạt động" value={formatNumber(stats.users.active)} detail={`${formatNumber(stats.users.total)} tài khoản toàn hệ thống`} tone="bg-[#24dfba]/10 text-[#24dfba]" />
                 <MetricCard icon="school" label="Khóa học" value={formatNumber(stats.content.active_courses)} detail={`${formatNumber(stats.content.total_lessons)} bài học · ${formatNumber(stats.content.total_quizzes)} quiz`} tone="bg-[#ffc080]/10 text-[#ffc080]" />
                 <MetricCard icon="speed" label="Phản hồi trung bình" value={`${formatNumber(stats.traffic.average_response_ms)} ms`} detail={`Tỷ lệ lỗi ${stats.traffic.error_rate_percent.toLocaleString('vi-VN')}%`} tone="bg-[#d5b8ff]/10 text-[#d5b8ff]" />
               </section>
@@ -160,11 +160,11 @@ export function SystemMonitoringPage() {
                 <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-6 xl:col-span-2">
                   <div className="mb-7 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                      <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Traffic analytics</p>
-                      <h2 className="mt-2 text-[22px] font-semibold">Lượt gọi API trong 7 ngày</h2>
+                      <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Thống kê hoạt động</p>
+                      <h2 className="mt-2 text-[22px] font-semibold">Hoạt động trong 7 ngày</h2>
                     </div>
                     <span className="rounded-full bg-[#24dfba]/10 px-3 py-1 font-mono text-[11px] text-[#24dfba]">
-                      {formatNumber(stats.traffic.unique_users_7d)} user duy nhất
+                      {formatNumber(stats.traffic.unique_users_7d)} người dùng duy nhất
                     </span>
                   </div>
 
@@ -179,7 +179,7 @@ export function SystemMonitoringPage() {
                               style={{ height: `${heightPercent}%` }}
                             >
                               <span className="absolute -top-7 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-[#0d131f] px-2 py-1 font-mono text-[10px] text-[#dde2f4] shadow-xl group-hover:block">
-                                {formatNumber(item.requests)} request
+                                {formatNumber(item.requests)} lượt xử lý
                               </span>
                             </div>
                           </div>
@@ -204,7 +204,7 @@ export function SystemMonitoringPage() {
                   <dl className="mt-7 space-y-3 text-[13px]">
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Đã dùng</dt><dd>{formatBytes(stats.storage.used_bytes)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Hạn mức cấu hình</dt><dd>{formatBytes(stats.storage.capacity_bytes)}</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Số object</dt><dd>{stats.storage.object_count === null ? '—' : formatNumber(stats.storage.object_count)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Số tệp lưu trữ</dt><dd>{stats.storage.object_count === null ? '—' : formatNumber(stats.storage.object_count)}</dd></div>
                   </dl>
                   {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{stats.storage.message}</p>}
                 </article>
@@ -232,16 +232,16 @@ export function SystemMonitoringPage() {
                 </article>
 
                 <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
-                  <h2 className="text-[18px] font-semibold">Enrollment</h2>
+                  <h2 className="text-[18px] font-semibold">Đăng ký khóa học</h2>
                   <div className="mt-5 grid grid-cols-2 gap-3">
                     <div className="rounded-xl bg-[#24dfba]/10 p-4"><p className="font-mono text-[10px] uppercase text-[#24dfba]">Đang học</p><strong className="mt-2 block text-[28px]">{formatNumber(stats.content.enrollments.active)}</strong></div>
                     <div className="rounded-xl bg-[#ffc080]/10 p-4"><p className="font-mono text-[10px] uppercase text-[#ffc080]">Chờ duyệt</p><strong className="mt-2 block text-[28px]">{formatNumber(stats.content.enrollments.pending)}</strong></div>
                   </div>
-                  <div className="mt-4 flex justify-between border-t border-[#414754] pt-4 text-[13px]"><span className="text-[#8b90a0]">Course đã xóa mềm</span><strong>{formatNumber(stats.content.deleted_courses)}</strong></div>
+                  <div className="mt-4 flex justify-between border-t border-[#414754] pt-4 text-[13px]"><span className="text-[#8b90a0]">Khóa học đã ẩn</span><strong>{formatNumber(stats.content.deleted_courses)}</strong></div>
                 </article>
 
                 <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
-                  <h2 className="text-[18px] font-semibold">Quiz attempt</h2>
+                  <h2 className="text-[18px] font-semibold">Lượt làm bài kiểm tra</h2>
                   <dl className="mt-5 space-y-3 text-[13px]">
                     <div className="flex items-center justify-between rounded-lg bg-[#adc7ff]/5 px-4 py-3"><dt className="text-[#c1c6d7]">Đang làm</dt><dd className="font-semibold text-[#adc7ff]">{formatNumber(stats.content.quiz_attempts.in_progress)}</dd></div>
                     <div className="flex items-center justify-between rounded-lg bg-[#24dfba]/5 px-4 py-3"><dt className="text-[#c1c6d7]">Đã nộp</dt><dd className="font-semibold text-[#24dfba]">{formatNumber(stats.content.quiz_attempts.submitted)}</dd></div>
