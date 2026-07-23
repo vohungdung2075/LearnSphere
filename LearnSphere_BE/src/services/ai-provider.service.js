@@ -37,11 +37,19 @@ const mapBedrockError = (error) => {
 
 const invokeBedrock = async ({ systemPrompt, messages, maxTokens, temperature }) => {
 	const { modelId } = getBedrockConfig();
+	// Omit topP when temperature is specified to avoid Converse API validation exception
+	const inferenceConfig = { maxTokens };
+	if (temperature !== undefined) {
+		inferenceConfig.temperature = temperature;
+	} else {
+		inferenceConfig.topP = 0.9;
+	}
+
 	const command = new ConverseCommand({
 		modelId,
 		system: [{ text: systemPrompt }],
 		messages,
-		inferenceConfig: { maxTokens, temperature, topP: 0.9 },
+		inferenceConfig,
 	});
 
 	try {
@@ -158,8 +166,33 @@ const invokeGroq = async ({ systemPrompt, messages, maxTokens, temperature }) =>
 export const getAIProvider = () => process.env.AI_PROVIDER?.trim().toLowerCase() || "bedrock";
 
 export const invokeAI = async (request) => {
-	const provider = getAIProvider();
-	if (provider === "bedrock") return invokeBedrock(request);
-	if (provider === "groq") return invokeGroq(request);
-	throw createAIError("AI_CONFIGURATION_ERROR", new Error(`Unsupported AI_PROVIDER: ${provider}`));
+	const primary = getAIProvider();
+	const fallback = primary === "bedrock" ? "groq" : "bedrock";
+
+	try {
+		console.log(`[AI] Calling primary provider: ${primary}`);
+		if (primary === "bedrock") return await invokeBedrock(request);
+		if (primary === "groq") return await invokeGroq(request);
+		throw createAIError("AI_CONFIGURATION_ERROR", new Error(`Unsupported AI_PROVIDER: ${primary}`));
+	} catch (primaryError) {
+		const shouldFallback =
+			primaryError.message === "AI_THROTTLED" ||
+			primaryError.message === "AI_TIMEOUT" ||
+			primaryError.message === "AI_SERVICE_UNAVAILABLE" ||
+			primaryError.message === "AI_ACCESS_DENIED" ||
+			primaryError.message === "AI_CREDENTIALS_ERROR";
+
+		if (!shouldFallback) {
+			throw primaryError;
+		}
+
+		console.warn(`[AI] Primary provider ${primary} failed (${primaryError.message}). Attempting fallback to ${fallback}...`);
+		try {
+			if (fallback === "bedrock") return await invokeBedrock(request);
+			if (fallback === "groq") return await invokeGroq(request);
+		} catch (fallbackError) {
+			console.error(`[AI] Fallback provider ${fallback} also failed: ${fallbackError.message}`);
+			throw primaryError;
+		}
+	}
 };
