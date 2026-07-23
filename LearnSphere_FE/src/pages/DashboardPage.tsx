@@ -21,7 +21,7 @@ function getRoleActions(role?: string): NavItem[] {
     return [
       { href: '/admin-users', icon: 'group', label: 'Duyệt tutor' },
       { href: '/courses', icon: 'school', label: 'Quản trị khóa học' },
-      { href: '/lesson-management', icon: 'auto_stories', label: 'Quản lý bài học' },
+      { href: '/lesson-management', icon: 'auto_stories', label: 'Quản lý khóa học' },
       { href: '/system-monitoring', icon: 'monitoring', label: 'Giám sát hệ thống' },
     ];
   }
@@ -29,7 +29,7 @@ function getRoleActions(role?: string): NavItem[] {
   if (role === 'tutor') {
     return [
       { href: '/courses', icon: 'add_circle', label: 'Tạo khóa học' },
-      { href: '/lesson-management', icon: 'auto_stories', label: 'Quản lý bài học' },
+      { href: '/lesson-management', icon: 'auto_stories', label: 'Quản lý khóa học' },
       { href: '/question-builder', icon: 'quiz', label: 'Tạo quiz' },
       { href: '/courses', icon: 'how_to_reg', label: 'Duyệt đăng ký' },
     ];
@@ -237,7 +237,7 @@ export function DashboardPage() {
                   const progress = course.progress;
                   const progressPercent = course.status === 'active' ? progress?.progress_percent ?? 0 : 0;
                   const canOpenCourse = course.status === 'active';
-                  const href = `/lesson-detail?course_id=${encodeURIComponent(course.id)}`;
+                  const href = `/course-detail?course_id=${encodeURIComponent(course.id)}`;
 
                   return (
                     <article key={course.id} className="group overflow-hidden rounded-2xl border border-[#253047] bg-[#070d19] shadow-2xl shadow-black/20 transition hover:border-[#adc7ff]/40">

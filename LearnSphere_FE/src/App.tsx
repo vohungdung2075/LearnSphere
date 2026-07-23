@@ -3,6 +3,7 @@ import { HomePage } from './pages/HomePage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AIAssistantPage } from './pages/AIAssistantPage';
 import { CourseCatalogPage } from './pages/CourseCatalogPage';
+import { CourseDetailPage } from './pages/CourseDetailPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { LessonDetailPage } from './pages/LessonDetailPage';
 import { LessonManagementPage } from './pages/LessonManagementPage';
@@ -72,11 +73,12 @@ function getRoute(pathname: string): RouteDefinition {
     '/my-courses': { element: <MyCoursesPage />, requiresAuth: true, roles: ['student'] },
     '/ai-assistant': { element: <AIAssistantPage />, requiresAuth: true, roles: ['student'] },
     '/courses': { element: <CourseCatalogPage /> },
+    '/course-detail': { element: <CourseDetailPage />, requiresAuth: true },
     '/lesson-detail': { element: <LessonDetailPage />, requiresAuth: true },
     '/lesson-management': { element: <LessonManagementPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/locked-courses': { element: <LockedCoursesPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/quiz': { element: <QuizPage />, requiresAuth: true },
-    '/question-builder': { element: <QuestionBuilderPage />, requiresAuth: true, roles: ['tutor'] },
+    '/question-builder': { element: <QuestionBuilderPage />, requiresAuth: true, roles: ['tutor', 'admin'] },
     '/system-monitoring': { element: <SystemMonitoringPage />, requiresAuth: true, roles: ['admin'] },
     '/admin-users': { element: <AdminUsersPage />, requiresAuth: true, roles: ['admin'] },
     '/profile': { element: <ProfilePage />, requiresAuth: true },

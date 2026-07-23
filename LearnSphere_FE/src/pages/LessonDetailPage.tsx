@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
-import { api, getStoredUser, type CourseDiscussion, type CourseProgress, type Lesson } from '../services/api';
+import { api, getAIErrorMessage, getStoredUser, type AISummaryResponse, type CourseDiscussion, type CourseProgress, type Lesson } from '../services/api';
 
 const avatarSrc =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuBoBuRJI1yShmJcMfHY1XLGNg58oqoS5MyV6HQICcczCWG7fu-lzanV_5ir_WBXQB19zta9onD5oKMvRyXiRpCjARwoUGMeyA0WX3cZa4UuBn_ZNEIt7g-llR2NmJcFr5na00oENmk4NouYphWdHgtSlu0awtCw8ILcImQS45sYgmsPBdDBehw';
@@ -13,6 +15,111 @@ function getRoleLabel(role?: string) {
   if (role === 'tutor') return 'Giảng viên';
   if (role === 'student') return 'Học viên';
   return 'Khách';
+}
+
+function renderSummaryInline(text: string): ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*|<sub>[^<]*<\/sub>|<sup>[^<]*<\/sup>|\$[^$\n]+\$|\\\([^\n]*?\\\))/gi).filter(Boolean).map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${part}-${index}`} className="font-semibold text-[#f0f4ff]">{renderSummaryInline(part.slice(2, -2))}</strong>;
+    }
+    const subscript = part.match(/^<sub>([^<]*)<\/sub>$/i);
+    if (subscript) {
+      return <sub key={`${part}-${index}`} className="text-[0.72em] leading-none">{subscript[1]}</sub>;
+    }
+    const superscript = part.match(/^<sup>([^<]*)<\/sup>$/i);
+    if (superscript) {
+      return <sup key={`${part}-${index}`} className="text-[0.72em] leading-none">{superscript[1]}</sup>;
+    }
+    const dollarMath = part.match(/^\$([^$\n]+)\$$/);
+    const parenthesisMath = part.match(/^\\\(([^\n]+)\\\)$/);
+    const math = dollarMath?.[1] ?? parenthesisMath?.[1];
+    if (math) {
+      return (
+        <span
+          key={`${part}-${index}`}
+          className="mx-0.5 inline-block max-w-full overflow-x-auto align-middle text-[#f0f4ff]"
+          dangerouslySetInnerHTML={{
+            __html: katex.renderToString(math, {
+              displayMode: false,
+              throwOnError: false,
+              strict: false,
+              trust: false,
+            }),
+          }}
+        />
+      );
+    }
+    return <Fragment key={`${part}-${index}`}>{part}</Fragment>;
+  });
+}
+
+function SummaryContent({ content }: { content: string }) {
+  return (
+    <div className="space-y-2 break-words text-[15px] leading-7 text-[#d8e0f2] md:text-[16px]">
+      {content.replace(/\r\n/g, '\n').split('\n').map((rawLine, index) => {
+        const line = rawLine.trim();
+        if (!line) return <div key={`space-${index}`} className="h-1" />;
+
+        const blockMath = line.match(/^\$\$([\s\S]+)\$\$$/) ?? line.match(/^\\\[([\s\S]+)\\\]$/);
+        if (blockMath) {
+          return (
+            <div
+              key={`math-${index}`}
+              className="my-4 max-w-full overflow-x-auto rounded-xl border border-[#354055] bg-[#070d19] px-4 py-3 text-center text-[#f0f4ff]"
+              dangerouslySetInnerHTML={{
+                __html: katex.renderToString(blockMath[1], {
+                  displayMode: true,
+                  throwOnError: false,
+                  strict: false,
+                  trust: false,
+                }),
+              }}
+            />
+          );
+        }
+
+        const heading = line.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+          return (
+            <h3 key={`heading-${index}`} className="mb-2 mt-5 text-[19px] font-bold leading-7 text-[#adc7ff] first:mt-0 md:text-[21px]">
+              {renderSummaryInline(heading[2])}
+            </h3>
+          );
+        }
+
+        if (/^\*\*[^*]+\*\*$/.test(line)) {
+          return (
+            <h3 key={`bold-heading-${index}`} className="mb-2 mt-5 text-[19px] font-bold leading-7 text-[#adc7ff] first:mt-0 md:text-[21px]">
+              {line.slice(2, -2)}
+            </h3>
+          );
+        }
+
+        const bullet = rawLine.match(/^(\s*)[-*+]\s+(.+)$/);
+        if (bullet) {
+          const nested = bullet[1].length >= 2;
+          return (
+            <div key={`bullet-${index}`} className={`flex items-start gap-3 ${nested ? 'ml-6' : ''}`}>
+              <span className="mt-[11px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#24dfba]" />
+              <p className="min-w-0 flex-1">{renderSummaryInline(bullet[2])}</p>
+            </div>
+          );
+        }
+
+        const ordered = line.match(/^(\d+)[.)]\s+(.+)$/);
+        if (ordered) {
+          return (
+            <div key={`ordered-${index}`} className="flex items-start gap-3">
+              <span className="min-w-6 font-mono font-bold text-[#24dfba]">{ordered[1]}.</span>
+              <p className="min-w-0 flex-1">{renderSummaryInline(ordered[2])}</p>
+            </div>
+          );
+        }
+
+        return <p key={`paragraph-${index}`}>{renderSummaryInline(line)}</p>;
+      })}
+    </div>
+  );
 }
 
 export function LessonDetailPage() {
@@ -29,11 +136,26 @@ export function LessonDetailPage() {
   const [sendingReplyId, setSendingReplyId] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [isVideoLoading, setIsVideoLoading] = useState(false);
+  const [videoError, setVideoError] = useState('');
+  const [videoReloadKey, setVideoReloadKey] = useState(0);
   const [isDiscussionLoading, setIsDiscussionLoading] = useState(false);
   const [isSendingDiscussion, setIsSendingDiscussion] = useState(false);
   const [isLoading, setIsLoading] = useState(Boolean(courseId || lessonId));
   const [message, setMessage] = useState('');
+  const [summary, setSummary] = useState<AISummaryResponse | null>(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const canManageSummary = user?.role === 'tutor';
   const activeCourseId = useMemo(() => courseId ?? lesson?.course_id ?? '', [courseId, lesson?.course_id]);
+
+  useEffect(() => {
+    setSummary(null);
+  }, [lesson?._id]);
+
+  useEffect(() => {
+    if (courseId && !lessonId) {
+      window.location.replace(`/course-detail?course_id=${encodeURIComponent(courseId)}`);
+    }
+  }, [courseId, lessonId]);
 
   useEffect(() => {
     if (!courseId) return;
@@ -42,7 +164,6 @@ export function LessonDetailPage() {
     api.getLessons(courseId)
       .then((items) => {
         setLessons(items);
-        if (!lessonId) setLesson(items[0] ?? null);
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : 'Không thể tải danh sách bài học'))
       .finally(() => setIsLoading(false));
@@ -69,6 +190,7 @@ export function LessonDetailPage() {
   useEffect(() => {
     let isActive = true;
     setVideoUrl('');
+    setVideoError('');
 
     if (!lesson?._id || !lesson.video_key) {
       setIsVideoLoading(false);
@@ -81,16 +203,18 @@ export function LessonDetailPage() {
         if (isActive) setVideoUrl(result.download_url);
       })
       .catch((err) => {
-        if (isActive) setMessage(err instanceof Error ? err.message : 'Không thể tải video bài học');
-      })
-      .finally(() => {
-        if (isActive) setIsVideoLoading(false);
+        if (isActive) {
+          const errorMessage = err instanceof Error ? err.message : 'Không thể lấy video bài học từ S3.';
+          setVideoError(errorMessage);
+          setMessage(errorMessage);
+          setIsVideoLoading(false);
+        }
       });
 
     return () => {
       isActive = false;
     };
-  }, [lesson?._id, lesson?.video_key]);
+  }, [lesson?._id, lesson?.video_key, videoReloadKey]);
 
   async function loadDiscussions(targetCourseId = activeCourseId) {
     if (!targetCourseId || !user) return;
@@ -195,6 +319,29 @@ export function LessonDetailPage() {
     }
   }
 
+  async function handleSummarizeLesson(forceRegenerate = false) {
+    if (!lesson?._id || isSummarizing) return;
+    if (forceRegenerate && !canManageSummary) return;
+
+    setIsSummarizing(true);
+    setMessage('');
+    if (!forceRegenerate) setSummary(null);
+    try {
+      const result = await api.summarizeLesson(lesson._id, forceRegenerate);
+      setSummary(result);
+      setLesson((current) => current ? {
+        ...current,
+        ai_index_status: result.ai_index_status ?? current.ai_index_status,
+        ai_indexed_at: result.ai_indexed_at ?? current.ai_indexed_at,
+        ai_index_error: result.ai_index_error ?? '',
+      } : current);
+    } catch (error) {
+      setMessage(getAIErrorMessage(error, 'Không thể tóm tắt bài học bằng AI.'));
+    } finally {
+      setIsSummarizing(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-[#070d19] text-[#e7ecff] selection:bg-[#adc7ff]/30">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
@@ -207,6 +354,12 @@ export function LessonDetailPage() {
           <nav className="mb-4 flex flex-wrap items-center gap-2 font-mono text-[12px] text-[#8b90a0]">
             <a className="transition hover:text-[#adc7ff]" href="/courses">Khóa học</a>
             <span className="material-symbols-outlined text-[14px]">chevron_right</span>
+			{activeCourseId && (
+			  <>
+				<a className="transition hover:text-[#adc7ff]" href={`/course-detail?course_id=${encodeURIComponent(activeCourseId)}`}>Thông tin khóa học</a>
+				<span className="material-symbols-outlined text-[14px]">chevron_right</span>
+			  </>
+			)}
             <span className="text-[#c1c6d7]">Bài học</span>
             {lesson && (
               <>
@@ -227,20 +380,82 @@ export function LessonDetailPage() {
 
           {lesson && (
             <>
-              <h1 className="text-[30px] font-semibold leading-10 text-[#e7ecff] md:text-[34px]">{lesson.title}</h1>
+              <div className="min-w-0 space-y-4">
+                <h1 className="max-w-full break-words text-[30px] font-semibold leading-10 text-[#e7ecff] md:text-[34px]">{lesson.title}</h1>
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  <button
+                    className="inline-flex max-w-full items-center justify-center gap-2 rounded-xl border border-[#adc7ff]/40 bg-[#adc7ff]/10 px-5 py-3 font-bold text-[#adc7ff] transition hover:bg-[#adc7ff]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    type="button"
+                    disabled={isSummarizing || !lesson.document_key || Boolean(summary)}
+                    onClick={() => void handleSummarizeLesson(false)}
+                  >
+                    <span className={`material-symbols-outlined text-[20px] ${isSummarizing ? 'animate-spin' : ''}`}>
+                      {isSummarizing ? 'progress_activity' : 'auto_awesome'}
+                    </span>
+                    {isSummarizing ? 'Đang tải tóm tắt...' : summary ? 'Đã hiển thị tóm tắt' : 'Xem tóm tắt bài học bằng AI'}
+                  </button>
+                </div>
+              </div>
 
               <section className="overflow-hidden rounded-xl border border-[#414754] bg-[#080e1a] shadow-[0_0_40px_-10px_rgba(74,142,255,0.35)]">
                 <div className="relative aspect-video bg-[radial-gradient(circle_at_50%_35%,rgba(74,142,255,0.28),transparent_34%),linear-gradient(135deg,#080e1a,#1a202c)]">
                   {videoUrl ? (
-                    <video
-                      className="h-full w-full bg-black object-contain"
-                      controls
-                      controlsList="nodownload"
-                      preload="metadata"
-                      src={videoUrl}
-                    >
-                      Trình duyệt của bạn không hỗ trợ phát video.
-                    </video>
+                    <>
+                      <video
+                        className="h-full w-full bg-black object-contain"
+                        controls
+                        controlsList="nodownload"
+                        playsInline
+                        preload="metadata"
+                        src={videoUrl}
+                        onLoadStart={() => {
+                          setVideoError('');
+                          setIsVideoLoading(true);
+                        }}
+                        onLoadedMetadata={() => setIsVideoLoading(false)}
+                        onCanPlay={() => setIsVideoLoading(false)}
+                        onError={() => {
+                          setIsVideoLoading(false);
+                          setVideoError('Không thể phát video này. Hãy kiểm tra file MP4 sử dụng codec H.264/AAC hoặc thử mở video trực tiếp.');
+                        }}
+                      >
+                        Trình duyệt của bạn không hỗ trợ phát video.
+                      </video>
+
+                      {isVideoLoading && !videoError && (
+                        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/55 text-center backdrop-blur-[2px]">
+                          <span className="material-symbols-outlined animate-spin text-[44px] text-[#adc7ff]">progress_activity</span>
+                          <p className="font-mono text-[12px] text-[#e7ecff]">Đang đọc thông tin video...</p>
+                          <p className="max-w-sm px-4 text-[12px] text-[#9da8bd]">Video dung lượng lớn có thể cần thêm thời gian tùy tốc độ mạng.</p>
+                        </div>
+                      )}
+
+                      {videoError && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-[#080e1a]/95 px-5 text-center">
+                          <span className="material-symbols-outlined text-[48px] text-[#ffcc7a]">video_file</span>
+                          <div>
+                            <h3 className="text-[18px] font-bold text-white">Video chưa thể phát</h3>
+                            <p className="mx-auto mt-2 max-w-lg text-[13px] leading-6 text-[#b8c1d6]">{videoError}</p>
+                          </div>
+                          <div className="flex flex-wrap justify-center gap-2">
+                            <button
+                              className="rounded-xl bg-[#adc7ff] px-4 py-2 font-mono text-[11px] font-black text-[#00285b]"
+                              type="button"
+                              onClick={() => setVideoReloadKey((current) => current + 1)}
+                            >
+                              Thử tải lại
+                            </button>
+                            <button
+                              className="rounded-xl border border-[#46536b] px-4 py-2 font-mono text-[11px] font-bold text-[#c5cee3]"
+                              type="button"
+                              onClick={() => void handleOpenLessonFile('video')}
+                            >
+                              Mở video trực tiếp
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <>
                       <div className="absolute inset-0 bg-[radial-gradient(circle_at_28%_18%,rgba(36,223,186,0.18),transparent_24%),linear-gradient(120deg,rgba(173,199,255,0.12),transparent_45%)] opacity-80" />
@@ -250,9 +465,18 @@ export function LessonDetailPage() {
                             {isVideoLoading ? 'progress_activity' : 'play_arrow'}
                           </span>
                         </span>
-                        <p className="font-mono text-[12px] text-[#c1c6d7]">
-                          {isVideoLoading ? 'Đang tải video...' : lesson.video_key ? 'Không thể hiển thị video lúc này.' : 'Bài học này chưa có video.'}
+                        <p className="max-w-lg px-4 font-mono text-[12px] leading-5 text-[#c1c6d7]">
+                          {isVideoLoading ? 'Đang lấy liên kết video từ S3...' : videoError || (lesson.video_key ? 'Không thể hiển thị video lúc này.' : 'Bài học này chưa có video.')}
                         </p>
+                        {videoError && (
+                          <button
+                            className="rounded-xl bg-[#adc7ff] px-4 py-2 font-mono text-[11px] font-black text-[#00285b]"
+                            type="button"
+                            onClick={() => setVideoReloadKey((current) => current + 1)}
+                          >
+                            Thử tải lại
+                          </button>
+                        )}
                       </div>
                     </>
                   )}
@@ -279,6 +503,37 @@ export function LessonDetailPage() {
                   <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                 </a>
               </div>
+
+              {summary && (
+                <section className="rounded-xl border border-[#24dfba]/30 bg-[#24dfba]/5 p-6 shadow-xl shadow-black/15">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <h2 className="flex items-center gap-2 text-[21px] font-semibold text-[#24dfba]">
+                      <span className="material-symbols-outlined">auto_awesome</span>
+                      Tóm tắt bởi Sphere AI
+                    </h2>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <span className="font-mono text-[10px] text-[#738098]">
+                        Bản đã lưu{summary.generated_at ? ` · ${new Date(summary.generated_at).toLocaleString('vi-VN')}` : ''}
+                        {summary.usage?.total_tokens ? ` · ${summary.usage.total_tokens.toLocaleString('vi-VN')} token` : ''}
+                      </span>
+                      {canManageSummary && (
+                        <button
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#24dfba]/35 bg-[#24dfba]/10 px-3 py-2 font-mono text-[10px] font-black uppercase tracking-wide text-[#24dfba] transition hover:bg-[#24dfba]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                          type="button"
+                          disabled={isSummarizing}
+                          onClick={() => void handleSummarizeLesson(true)}
+                        >
+                          <span className={`material-symbols-outlined text-[16px] ${isSummarizing ? 'animate-spin' : ''}`}>
+                            {isSummarizing ? 'progress_activity' : 'refresh'}
+                          </span>
+                          {isSummarizing ? 'Đang tạo lại...' : 'Tạo lại bằng AI'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <SummaryContent content={summary.summary} />
+                </section>
+              )}
 
               <article className="rounded-xl border border-[#414754] bg-[#1a202c] p-6 shadow-xl shadow-black/20 md:p-8">
                 <h2 className="mb-3 text-[24px] font-semibold text-[#adc7ff]">Nội dung bài học</h2>
@@ -464,70 +719,8 @@ export function LessonDetailPage() {
           )}
             </section>
 
-            <aside className="space-y-5 lg:sticky lg:top-24 lg:col-span-4">
-              <section className="rounded-xl border border-[#414754] bg-[#161f2e] p-5 shadow-xl shadow-black/20">
-                <div className="mb-4 flex items-center justify-between">
-                  <h2 className="font-mono text-[12px] font-bold uppercase tracking-wider text-[#adc7ff]">Lesson Progress</h2>
-                  <span className="text-[26px] font-bold text-[#24dfba]">{progressPercent}%</span>
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-[#2f3542]">
-                  <div className="h-full rounded-full bg-gradient-to-r from-[#adc7ff] to-[#24dfba] shadow-[0_0_12px_rgba(36,223,186,0.45)]" style={{ width: `${progressPercent}%` }} />
-                </div>
-                <p className="mt-3 font-mono text-[12px] text-[#c1c6d7]">
-                  {progress ? `Đã hoàn thành ${progress.completed_lessons}/${progress.total_lessons} bài học.` : 'Tiến độ sẽ hiển thị khi học viên tham gia khóa học.'}
-                </p>
-                {user?.role === 'student' && lesson && (
-                  <button
-                    className="mt-4 w-full rounded-lg bg-[#24dfba] px-4 py-3 font-mono text-[12px] font-bold text-[#00382c] transition hover:brightness-110"
-                    type="button"
-                    onClick={handleCompleteLesson}
-                  >
-                    Hoàn thành bài học
-                  </button>
-                )}
-              </section>
-
-              {courseId && (
-                <section className="rounded-xl border border-[#414754] bg-[#242a37] p-5 text-center shadow-xl shadow-black/20">
-                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#ffc080]/25 bg-[#ffc080]/10 text-[#ffc080]">
-                    <span className="material-symbols-outlined text-[34px]" style={{ fontVariationSettings: '"FILL" 1' }}>quiz</span>
-                  </div>
-                  <h2 className="text-[22px] font-semibold text-[#e7ecff]">Knowledge Check</h2>
-                  <p className="mt-2 text-[14px] leading-6 text-[#c1c6d7]">Kiểm tra mức độ hiểu bài sau khi học xong nội dung chính.</p>
-                  <a
-                    className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-[#ffc080] px-5 py-3 font-bold text-[#4a2800] transition hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,192,128,0.3)]"
-                    href={`/quiz?course_id=${encodeURIComponent(courseId)}`}
-                  >
-                    Làm quiz
-                  </a>
-                </section>
-              )}
-
-              <section className="rounded-xl border border-[#414754] bg-[#1a202c] p-5 shadow-xl shadow-black/20">
-                <h2 className="mb-4 flex items-center gap-2 font-mono text-[12px] font-bold uppercase tracking-wider text-[#c1c6d7]">
-                  <span className="material-symbols-outlined text-[16px]">link</span>
-                  Resources
-                </h2>
-                <div className="space-y-3">
-                  <button
-                    className="flex w-full items-center gap-3 rounded-xl border border-[#24dfba]/30 bg-[#24dfba]/10 px-4 py-4 text-left transition hover:bg-[#24dfba]/16 disabled:cursor-not-allowed disabled:border-[#414754] disabled:bg-[#0d131f] disabled:opacity-60"
-                    type="button"
-                    disabled={!lesson?.document_key}
-                    onClick={() => void handleOpenLessonFile('document')}
-                  >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#24dfba] text-[#00382c]">
-                      <span className="material-symbols-outlined text-[23px]">description</span>
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[15px] font-semibold text-[#e7ecff]">Tải tài liệu</span>
-                      <span className="mt-0.5 block text-[12px] text-[#8b90a0]">{lesson?.document_key ? 'Mở tài liệu học tập trong tab mới' : 'Chưa có tài liệu'}</span>
-                    </span>
-                    {lesson?.document_key && <span className="material-symbols-outlined text-[18px] text-[#8b90a0]">download</span>}
-                  </button>
-                </div>
-              </section>
-
-              <section className="rounded-xl border border-[#414754] bg-[#161c28] p-5 shadow-xl shadow-black/20">
+            <aside className="flex flex-col gap-5 lg:sticky lg:top-24 lg:col-span-4">
+              <section className="order-1 rounded-xl border border-[#414754] bg-[#161c28] p-5 shadow-xl shadow-black/20">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="font-mono text-[12px] font-bold uppercase tracking-wider text-[#8b90a0]">Course Modules</h2>
                   <span className="font-mono text-[12px] text-[#adc7ff]">{lessons.length}</span>
@@ -553,12 +746,107 @@ export function LessonDetailPage() {
                   ))}
                 </div>
               </section>
+
+              <section className="order-2 rounded-xl border border-[#414754] bg-[#161f2e] p-5 shadow-xl shadow-black/20">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="font-mono text-[12px] font-bold uppercase tracking-wider text-[#adc7ff]">Lesson Progress</h2>
+                  <span className="text-[26px] font-bold text-[#24dfba]">{progressPercent}%</span>
+                </div>
+                <div className="h-3 overflow-hidden rounded-full bg-[#2f3542]">
+                  <div className="h-full rounded-full bg-gradient-to-r from-[#adc7ff] to-[#24dfba] shadow-[0_0_12px_rgba(36,223,186,0.45)]" style={{ width: `${progressPercent}%` }} />
+                </div>
+                <p className="mt-3 font-mono text-[12px] text-[#c1c6d7]">
+                  {progress ? `Đã hoàn thành ${progress.completed_lessons}/${progress.total_lessons} bài học.` : 'Tiến độ sẽ hiển thị khi học viên tham gia khóa học.'}
+                </p>
+                {user?.role === 'student' && lesson && (
+                  <button
+                    className="mt-4 w-full rounded-lg bg-[#24dfba] px-4 py-3 font-mono text-[12px] font-bold text-[#00382c] transition hover:brightness-110"
+                    type="button"
+                    onClick={handleCompleteLesson}
+                  >
+                    Hoàn thành bài học
+                  </button>
+                )}
+              </section>
+
+              {courseId && (
+                <section className="order-4 rounded-xl border border-[#414754] bg-[#242a37] p-5 text-center shadow-xl shadow-black/20">
+                  <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl border border-[#ffc080]/25 bg-[#ffc080]/10 text-[#ffc080]">
+                    <span className="material-symbols-outlined text-[34px]" style={{ fontVariationSettings: '"FILL" 1' }}>quiz</span>
+                  </div>
+                  <h2 className="text-[22px] font-semibold text-[#e7ecff]">Knowledge Check</h2>
+                  <p className="mt-2 text-[14px] leading-6 text-[#c1c6d7]">Kiểm tra mức độ hiểu bài sau khi học xong nội dung chính.</p>
+                  <a
+                    className="mt-5 inline-flex w-full items-center justify-center rounded-xl bg-[#ffc080] px-5 py-3 font-bold text-[#4a2800] transition hover:scale-[1.02] hover:shadow-[0_0_20px_rgba(255,192,128,0.3)]"
+                    href={`/quiz?course_id=${encodeURIComponent(courseId)}`}
+                  >
+                    Làm quiz
+                  </a>
+                </section>
+              )}
+
+              <section className="order-3 rounded-2xl border border-[#24dfba]/45 bg-[linear-gradient(145deg,rgba(36,223,186,0.12),rgba(17,24,39,0.96)_58%)] p-5 shadow-[0_16px_40px_rgba(0,0,0,0.28),0_0_24px_rgba(36,223,186,0.08)]">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="flex items-center gap-2 text-[17px] font-extrabold text-[#e7ecff]">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#24dfba] text-[#00382c]">
+                      <span className="material-symbols-outlined text-[21px]">menu_book</span>
+                    </span>
+                    Tài liệu học tập
+                  </h2>
+                  <span className="rounded-full border border-[#ffcc7a]/30 bg-[#ffcc7a]/10 px-3 py-1 font-mono text-[10px] font-black uppercase tracking-wider text-[#ffcc7a]">Quan trọng</span>
+                </div>
+                {lesson?.document_key && user?.role !== 'student' && (
+                  <div className="mb-4 rounded-xl border border-[#adc7ff]/30 bg-[#070d19]/65 p-3">
+                    <div className="flex items-center gap-2 text-[13px] font-semibold text-[#adc7ff]">
+                      <span className={`material-symbols-outlined text-[18px] ${lesson.ai_index_status === 'processing' ? 'animate-spin' : ''}`}>
+                        {lesson.ai_index_status === 'ready'
+                          ? 'check_circle'
+                          : lesson.ai_index_status === 'partial'
+                            ? 'warning'
+                            : lesson.ai_index_status === 'failed'
+                              ? 'error'
+                              : lesson.ai_index_status === 'processing'
+                                ? 'progress_activity'
+                                : 'smart_toy'}
+                      </span>
+					  {lesson.ai_index_status === 'ready'
+						? 'AI đã đọc document'
+						: lesson.ai_index_status === 'partial'
+						  ? 'AI mới đọc được một phần document'
+						  : lesson.ai_index_status === 'failed'
+							? 'AI chưa xử lý được document'
+							: lesson.ai_index_status === 'processing'
+							  ? 'AI đang xử lý document'
+							  : 'Document chưa được phân tích cho AI'}
+                    </div>
+                    {lesson.ai_index_error && <p className="mt-2 text-[12px] leading-5 text-[#ffb4ab]">{lesson.ai_index_error}</p>}
+                  </div>
+                )}
+                <div className="space-y-3">
+                  <button
+                    className="group flex w-full items-center gap-3 rounded-xl border border-[#24dfba]/55 bg-[#24dfba]/15 px-4 py-4 text-left shadow-lg shadow-[#24dfba]/5 transition hover:-translate-y-0.5 hover:bg-[#24dfba]/22 hover:shadow-[#24dfba]/15 disabled:cursor-not-allowed disabled:border-[#414754] disabled:bg-[#0d131f] disabled:opacity-60"
+                    type="button"
+                    disabled={!lesson?.document_key}
+                    onClick={() => void handleOpenLessonFile('document')}
+                  >
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#24dfba] text-[#00382c]">
+                      <span className="material-symbols-outlined text-[23px]">description</span>
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[16px] font-extrabold text-[#e7ecff]">Mở tài liệu bài học</span>
+                      <span className="mt-0.5 block text-[12px] text-[#8b90a0]">{lesson?.document_key ? 'Mở tài liệu học tập trong tab mới' : 'Chưa có tài liệu'}</span>
+                    </span>
+                    {lesson?.document_key && <span className="material-symbols-outlined text-[20px] text-[#24dfba] transition group-hover:translate-x-1">open_in_new</span>}
+                  </button>
+                </div>
+              </section>
+
             </aside>
           </div>
         </div>
       </main>
 
-      <SphereAIButton />
+      <SphereAIButton href={`/ai-assistant?course_id=${encodeURIComponent(activeCourseId)}${lesson?._id ? `&lesson_id=${encodeURIComponent(lesson._id)}` : ''}`} />
     </div>
   );
 }

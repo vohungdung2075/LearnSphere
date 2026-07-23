@@ -1,4 +1,5 @@
 import { createLesson, getCourseLessons, getLessonById, updateLesson, deleteLesson, completeLesson, getCourseProgress } from "../services/lesson.service.js";
+import { indexLessonFilesForAI } from "../services/lesson-ai-index.service.js";
 
 export const handleCreateLesson = async (req, res) => {
 	const { course_id } = req.params ?? {};
@@ -91,7 +92,9 @@ export const handleDeleteLesson = async (req, res) => {
 		if (error.message === "INVALID_LESSON_ID") return res.status(400).json({ message: "Invalid lesson ID format" });
 		if (error.message === "LESSON_NOT_FOUND" || error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Resource not found" });
 		if (error.message === "FORBIDDEN_LESSON_ACTION") return res.status(403).json({ message: "Forbidden - Action denied" });
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") return res.status(502).json({ message: "Unable to delete lesson files from S3; lesson was not deleted", code: error.message });
 
+		console.error("Delete lesson error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
 };
@@ -120,6 +123,22 @@ export const handleGetCourseProgress = async (req, res) => {
 		if (error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Course not found" });
 		if (error.message === "ACTIVE_ENROLLMENT_REQUIRED") return res.status(403).json({ message: "Active enrollment required to view progress" });
 
+		return res.status(500).json({ message: "Internal server error" });
+	}
+};
+
+export const handleIndexLessonForAI = async (req, res) => {
+	try {
+		const result = await indexLessonFilesForAI(req.params?.lesson_id, req.user._id, req.user.role);
+		return res.status(200).json({ message: "Lesson files processed for AI", ...result });
+	} catch (error) {
+		if (error.message === "INVALID_LESSON_ID") return res.status(400).json({ message: "Invalid lesson ID format" });
+		if (error.message === "LESSON_NOT_FOUND" || error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Resource not found" });
+		if (error.message === "FORBIDDEN_LESSON_ACTION") return res.status(403).json({ message: "Forbidden - Action denied" });
+		if (error.message === "LESSON_DOCUMENT_REQUIRED") return res.status(409).json({ message: "A document is required for AI indexing", code: error.message });
+		if (error.message === "AI_INDEX_IN_PROGRESS") return res.status(409).json({ message: "Lesson files are already being processed", code: error.message });
+
+		console.error("Index lesson files for AI error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
 };

@@ -15,7 +15,7 @@ type CourseStatusFilter = 'all' | 'active' | 'pending' | 'completed';
 type SortMode = 'recent' | 'progress' | 'title';
 
 function getCourseHref(courseId: string) {
-  return `/lesson-detail?course_id=${encodeURIComponent(courseId)}`;
+  return `/course-detail?course_id=${encodeURIComponent(courseId)}`;
 }
 
 function formatDate(value?: string | null) {

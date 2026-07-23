@@ -44,6 +44,18 @@ export type Lesson = {
   video_key?: string;
   document_key?: string;
   order_index: number;
+  ai_index_status?: 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
+  ai_indexed_at?: string | null;
+  ai_index_error?: string;
+};
+
+export type LessonAIIndexResult = {
+  message: string;
+  lesson_id: string;
+  status: 'ready' | 'failed';
+  indexed_at: string;
+  document_indexed: boolean;
+  issues: string[];
 };
 
 export type CourseProgress = {
@@ -53,12 +65,17 @@ export type CourseProgress = {
   total_lessons: number;
 };
 
+export type QuizDifficulty = 'basic' | 'medium' | 'advanced';
+
 export type Quiz = {
   _id: string;
   course_id: string;
   title: string;
   description?: string;
   time_limit: number;
+  difficulty: QuizDifficulty;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type QuizAnswer = {
@@ -83,6 +100,55 @@ export type QuestionInput = {
     content: string;
     is_correct: boolean;
   }>;
+};
+
+export type AIUsage = {
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+};
+
+export type AIHistoryItem = {
+  _id: string;
+  course_id: string | null;
+  lesson_id: string | null;
+  user_message: string;
+  ai_response: string;
+  model_id?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  stop_reason?: string;
+  createdAt: string;
+};
+
+export type AIChatResponse = {
+  id: string;
+  reply: string;
+  model_id: string;
+  stop_reason?: string;
+  usage: AIUsage | null;
+};
+
+export type AISummaryResponse = {
+  lesson_id: string;
+  summary: string;
+  model_id: string;
+  stop_reason?: string;
+  usage: AIUsage | null;
+  cached: boolean;
+  generated_at?: string | null;
+  ai_index_status?: Lesson['ai_index_status'];
+  ai_indexed_at?: string | null;
+  ai_index_error?: string;
+};
+
+export type AIGeneratedQuizResponse = {
+  lesson_id: string;
+  difficulty: QuizDifficulty;
+  questions: QuestionInput[];
+  model_id: string;
+  usage: AIUsage | null;
 };
 
 export type QuizStart = {
@@ -228,6 +294,39 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
   auth?: boolean;
 };
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  retryAfterSeconds?: number;
+
+  constructor(message: string, status: number, code?: string, retryAfterSeconds?: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+export function getAIErrorMessage(error: unknown, fallback: string) {
+  if (!(error instanceof ApiError)) return error instanceof Error ? error.message : fallback;
+
+  if (error.status === 401) return 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.';
+  if (error.status === 403) return 'Bạn không có quyền sử dụng AI trong khóa học hoặc bài học này.';
+  if (error.code === 'AI_TIMEOUT') return 'AI xử lý tài liệu quá lâu và đã hết thời gian chờ. Vui lòng thử lại; nếu tiếp tục xảy ra, hãy giảm độ dài tài liệu.';
+  if (error.code === 'AI_THROTTLED') return 'Dịch vụ AI đã hết quota hoặc đang giới hạn lưu lượng. Vui lòng thử lại sau.';
+  if (error.code === 'AI_DOCUMENT_NOT_INDEXED') return 'Backend không OCR được document của bài học. Hãy xem trạng thái học liệu và kiểm tra PDF có bị lỗi hoặc đặt mật khẩu hay không.';
+  if (error.code === 'AI_SUMMARY_NOT_READY') return 'Giảng viên chưa tạo bản tóm tắt cho tài liệu này.';
+  if (error.code === 'AI_INDEX_IN_PROGRESS') return 'AI đang xử lý file bài học. Vui lòng đợi hoàn tất rồi thử lại.';
+  if (error.code === 'AI_FILES_NOT_INDEXED') return 'Giảng viên cần tóm tắt học liệu bằng AI ít nhất một lần trước khi học viên sử dụng.';
+	if (error.code === 'LESSON_DOCUMENT_REQUIRED') return 'Bài học cần có document để tạo bản tóm tắt.';
+  if (error.code === 'AI_RATE_LIMITED') {
+    return `Bạn đã gửi quá nhiều yêu cầu AI. Vui lòng thử lại sau ${error.retryAfterSeconds ?? 60} giây.`;
+  }
+
+  return error.message || fallback;
+}
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
 const TOKEN_KEY = 'learnsphere_access_token';
 const USER_KEY = 'learnsphere_user';
@@ -287,7 +386,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   }
 
   if (!response.ok) {
-    throw new Error(data?.message ?? data?.detail ?? `Request failed with status ${response.status}`);
+    throw new ApiError(
+      data?.message ?? data?.detail ?? `Request failed with status ${response.status}`,
+      response.status,
+      data?.code,
+      data?.retry_after_seconds,
+    );
   }
 
   return data as T;
@@ -346,6 +450,17 @@ export const api = {
   restoreCourse(courseId: string) {
     return request<{ message: string; course: Course }>(`/courses/${courseId}/restore`, {
       method: 'PATCH',
+    });
+  },
+
+  permanentlyDeleteCourse(courseId: string) {
+    return request<{
+      message: string;
+      course_id: string;
+      deleted_s3_objects: number;
+      deleted_records: Record<string, number>;
+    }>(`/courses/${courseId}/permanent`, {
+      method: 'DELETE',
     });
   },
 
@@ -411,6 +526,12 @@ export const api = {
     });
   },
 
+  indexLessonForAI(lessonId: string) {
+    return request<LessonAIIndexResult>(`/lessons/${lessonId}/ai-index`, {
+      method: 'POST',
+    });
+  },
+
   deleteLesson(lessonId: string) {
     return request<{ message: string }>(`/lessons/${lessonId}`, {
       method: 'DELETE',
@@ -425,6 +546,46 @@ export const api = {
 
   getCourseProgress(courseId: string) {
     return request<CourseProgress>(`/courses/${courseId}/progress`);
+  },
+
+  chatWithAI(body: { message: string; course_id?: string; lesson_id?: string }) {
+    return request<AIChatResponse>('/ai/chat', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  summarizeLesson(lessonId: string, forceRegenerate = false) {
+    return request<AISummaryResponse>(`/ai/summarize-lesson/${lessonId}`, {
+      method: 'POST',
+      body: { force_regenerate: forceRegenerate },
+    });
+  },
+
+  generateQuizWithAI(body: { lesson_id: string; number_of_questions: number; difficulty: QuizDifficulty }) {
+    return request<AIGeneratedQuizResponse>('/ai/generate-quiz', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  getAIHistory(filters: { course_id?: string; lesson_id?: string; limit?: number } = {}) {
+    const params = new URLSearchParams();
+    if (filters.course_id) params.set('course_id', filters.course_id);
+    if (filters.lesson_id) params.set('lesson_id', filters.lesson_id);
+    if (filters.limit) params.set('limit', String(filters.limit));
+    const query = params.toString();
+    return request<{ items: AIHistoryItem[] }>(`/ai/history${query ? `?${query}` : ''}`);
+  },
+
+  deleteAIHistory(filters: { course_id?: string; lesson_id?: string } = {}) {
+    const params = new URLSearchParams();
+    if (filters.course_id) params.set('course_id', filters.course_id);
+    if (filters.lesson_id) params.set('lesson_id', filters.lesson_id);
+    const query = params.toString();
+    return request<{ message: string; deleted_count: number }>(`/ai/history${query ? `?${query}` : ''}`, {
+      method: 'DELETE',
+    });
   },
 
   getCourseQuizzes(courseId: string) {
@@ -449,14 +610,14 @@ export const api = {
     });
   },
 
-  createQuiz(courseId: string, body: { title: string; description?: string; time_limit: number }) {
+  createQuiz(courseId: string, body: { title: string; description?: string; time_limit: number; difficulty: QuizDifficulty }) {
     return request<{ message: string; quiz: Quiz }>(`/courses/${courseId}/quizzes`, {
       method: 'POST',
       body,
     });
   },
 
-  updateQuiz(quizId: string, body: { title?: string; description?: string; time_limit?: number }) {
+  updateQuiz(quizId: string, body: { title?: string; description?: string; time_limit?: number; difficulty?: QuizDifficulty }) {
     return request<{ message: string; quiz: Quiz }>(`/quizzes/${quizId}`, {
       method: 'PUT',
       body,
@@ -525,33 +686,39 @@ export const api = {
     return request<PresignedDownload>(`/files/presigned-download?lesson_id=${lessonId}&target_type=${targetType}`);
   },
 
-  async uploadFileToS3(uploadUrl: string, file: File) {
-    let response: Response;
+  uploadFileToS3(uploadUrl: string, file: File, onProgress?: (percent: number) => void) {
+    return new Promise<boolean>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('Content-Type', file.type);
 
-    try {
-      response = await fetch(uploadUrl, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': file.type,
-        },
-        body: file,
-      });
-    } catch {
-      throw new Error('Không thể kết nối tới S3. Hãy kiểm tra CORS của bucket và kết nối mạng.');
-    }
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        onProgress?.(Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      };
 
-    if (!response.ok) {
-      const responseBody = await response.text().catch(() => '');
-      const s3Code = responseBody.match(/<Code>([^<]+)<\/Code>/)?.[1];
-      const s3Message = responseBody.match(/<Message>([^<]+)<\/Message>/)?.[1];
-      const detail = [s3Code, s3Message].filter(Boolean).join(': ');
+      xhr.onerror = () => {
+        reject(new Error('Không thể kết nối tới S3. Hãy kiểm tra CORS của bucket và kết nối mạng.'));
+      };
 
-      throw new Error(
-        `Upload file lên S3 thất bại (${response.status}${detail ? ` - ${detail}` : ''}). ` +
-        'Hãy xin URL mới và kiểm tra AWS credentials, IAM PutObject và bucket CORS.',
-      );
-    }
-    return true;
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onProgress?.(100);
+          resolve(true);
+          return;
+        }
+
+        const s3Code = xhr.responseText.match(/<Code>([^<]+)<\/Code>/)?.[1];
+        const s3Message = xhr.responseText.match(/<Message>([^<]+)<\/Message>/)?.[1];
+        const detail = [s3Code, s3Message].filter(Boolean).join(': ');
+        reject(new Error(
+          `Upload file lên S3 thất bại (${xhr.status}${detail ? ` - ${detail}` : ''}). ` +
+          'Hãy xin URL mới và kiểm tra AWS credentials, IAM PutObject và bucket CORS.',
+        ));
+      };
+
+      xhr.send(file);
+    });
   },
 
   forgotPassword(email: string) {

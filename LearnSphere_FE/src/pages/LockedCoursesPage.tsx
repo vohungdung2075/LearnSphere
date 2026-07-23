@@ -24,6 +24,8 @@ export function LockedCoursesPage() {
   const [message, setMessage] = useState('');
   const [courseToRestore, setCourseToRestore] = useState<Course | null>(null);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [courseToPurge, setCourseToPurge] = useState<Course | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
 
   async function loadDeletedCourses() {
     if (!canManageContent(user)) return;
@@ -53,9 +55,24 @@ export function LockedCoursesPage() {
       setCourseToRestore(null);
       await loadDeletedCourses();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Không thể mở khóa khóa học');
+      setMessage(err instanceof Error ? err.message : 'Không thể khôi phục khóa học');
     } finally {
       setIsRestoring(false);
+    }
+  }
+
+  async function handlePermanentDelete() {
+    if (!courseToPurge) return;
+    setIsPurging(true);
+    try {
+      const result = await api.permanentlyDeleteCourse(courseToPurge._id);
+      setMessage(`${result.message} (${result.deleted_s3_objects} file S3)`);
+      setCourseToPurge(null);
+      await loadDeletedCourses();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể xóa vĩnh viễn khóa học');
+    } finally {
+      setIsPurging(false);
     }
   }
 
@@ -87,9 +104,9 @@ export function LockedCoursesPage() {
               <div>
                 <span className="inline-flex items-center gap-2 rounded-full border border-[#24dfba]/30 bg-[#24dfba]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-[#24dfba]">
                   <span className="material-symbols-outlined text-[16px]">lock_open</span>
-                  Mở khóa
+                  Khôi phục
                 </span>
-                <h2 className="mt-4 text-[24px] font-extrabold text-white">Mở khóa khóa học này?</h2>
+                <h2 className="mt-4 text-[24px] font-extrabold text-white">Khôi phục khóa học này?</h2>
                 <p className="mt-2 text-[14px] leading-6 text-[#b8c1d6]">{courseToRestore.title}</p>
               </div>
               <button
@@ -111,7 +128,7 @@ export function LockedCoursesPage() {
             </div>
 
             <p className="mt-4 text-[14px] leading-6 text-[#b8c1d6]">
-              Sau khi mở khóa, khóa học sẽ quay lại danh sách khóa học chính và người học có thể truy cập lại nội dung.
+              Sau khi khôi phục, khóa học sẽ quay lại danh sách khóa học chính và người học có thể truy cập lại nội dung.
             </p>
 
             <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
@@ -129,7 +146,57 @@ export function LockedCoursesPage() {
                 disabled={isRestoring}
                 onClick={() => void handleRestore()}
               >
-                {isRestoring ? 'Đang mở khóa...' : 'Mở khóa'}
+                {isRestoring ? 'Đang khôi phục...' : 'Khôi phục'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {courseToPurge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6">
+          <section className="w-full max-w-[540px] rounded-2xl border border-[#ffb4ab]/30 bg-[#111827] p-5 shadow-2xl shadow-black/50">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#ffb4ab]/30 bg-[#ffb4ab]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-[#ffb4ab]">
+                  <span className="material-symbols-outlined text-[16px]">delete_forever</span>
+                  Không thể hoàn tác
+                </span>
+                <h2 className="mt-4 text-[24px] font-extrabold text-white">Xóa vĩnh viễn khóa học?</h2>
+                <p className="mt-2 text-[14px] leading-6 text-[#b8c1d6]">{courseToPurge.title}</p>
+              </div>
+              <button
+                className="rounded-lg border border-[#354055] p-2 text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                aria-label="Đóng"
+                onClick={() => {
+                  if (!isPurging) setCourseToPurge(null);
+                }}
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-[#ffb4ab]/25 bg-[#ffb4ab]/10 p-4 text-[14px] leading-6 text-[#ffd9d5]">
+              Toàn bộ video, tài liệu, thumbnail trên S3 cùng bài học, quiz, tiến độ, lượt ghi danh và dữ liệu liên quan sẽ bị xóa. Khóa học không thể khôi phục sau thao tác này.
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-xl border border-[#354055] px-5 py-3 font-mono text-[12px] font-bold text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                disabled={isPurging}
+                onClick={() => setCourseToPurge(null)}
+              >
+                Hủy
+              </button>
+              <button
+                className="rounded-xl bg-[#ffb4ab] px-5 py-3 font-mono text-[12px] font-black uppercase tracking-wide text-[#690005] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={isPurging}
+                onClick={() => void handlePermanentDelete()}
+              >
+                {isPurging ? 'Đang xóa dữ liệu...' : 'Xóa vĩnh viễn'}
               </button>
             </div>
           </section>
@@ -142,7 +209,7 @@ export function LockedCoursesPage() {
             <p className="mb-2 font-mono text-[12px] uppercase tracking-wider text-[#8b90a0]">{getRoleLabel(user?.role)}</p>
             <h1 className="text-[32px] font-semibold">Khóa học bị khóa</h1>
             <p className="mt-1 text-[#c1c6d7]">
-              Danh sách các khóa học đã bị tạm khóa. Admin có thể mở khóa, còn giảng viên có thể xem lý do và thời gian khóa.
+              Danh sách khóa học đã xóa mềm. Admin và giảng viên sở hữu khóa học có thể khôi phục hoặc xóa vĩnh viễn cả dữ liệu S3.
             </p>
           </div>
           <span className="rounded-xl border border-[#354055] bg-[#070d19] px-4 py-2 font-mono text-[12px] text-[#8b90a0]">
@@ -188,11 +255,18 @@ export function LockedCoursesPage() {
                       {course.deleted_reason || 'Chưa có lý do khóa.'}
                     </p>
                   </div>
-                  {user?.role === 'admin' && (
-                    <button className="mt-5 rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => setCourseToRestore(course)}>
-                      Mở khóa
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button className="rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => setCourseToRestore(course)}>
+                      Khôi phục
                     </button>
-                  )}
+                    <button
+                      className="rounded-lg border border-[#ffb4ab]/50 bg-[#ffb4ab]/10 px-5 py-3 font-mono text-[13px] font-bold text-[#ffb4ab] transition hover:bg-[#ffb4ab]/20"
+                      type="button"
+                      onClick={() => setCourseToPurge(course)}
+                    >
+                      Xóa vĩnh viễn
+                    </button>
+                  </div>
                 </article>
               );
             })}
