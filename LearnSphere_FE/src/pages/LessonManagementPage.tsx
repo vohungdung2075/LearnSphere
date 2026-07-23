@@ -504,11 +504,11 @@ export function LessonManagementPage() {
                 </p>
                 {user?.role === 'tutor' && (
                   <button
-                    className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#24dfba] px-4 py-3 font-mono text-[12px] font-black uppercase tracking-wide text-[#00382c] shadow-lg shadow-[#24dfba]/15 transition hover:brightness-110"
+                    className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg border border-[#24dfba]/45 bg-[#24dfba]/12 px-4 py-2.5 font-mono text-[11px] font-black uppercase tracking-wide text-[#24dfba] transition hover:bg-[#24dfba] hover:text-[#00382c]"
                     type="button"
                     onClick={() => setIsCreateCourseOpen(true)}
                   >
-                    <span className="material-symbols-outlined text-[19px]">add_circle</span>
+                    <span className="material-symbols-outlined text-[17px]">add_circle</span>
                     Tạo thêm khóa học
                   </button>
                 )}
