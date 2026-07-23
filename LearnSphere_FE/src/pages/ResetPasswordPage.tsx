@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from 'react';
+import { BrandLogo } from '../components/BrandLogo';
 import { api } from '../services/api';
 
 export function ResetPasswordPage() {
   const params = new URLSearchParams(window.location.search);
-  const token = params.get('token') ?? '';
+  const pathToken = window.location.pathname.match(/^\/reset-password\/([^/]+)\/?$/)?.[1];
+  const token = pathToken ?? params.get('token') ?? '';
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -45,12 +47,7 @@ export function ResetPasswordPage() {
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#0d131f] text-[#dde2f4]">
       <header className="sticky top-0 z-50 flex w-full items-center justify-between px-4 py-6 md:px-8 lg:px-10">
-        <a className="flex items-center gap-2" href="/">
-          <span className="material-symbols-outlined text-[30px] text-[#adc7ff]" style={{ fontVariationSettings: '"FILL" 1' }}>
-            school
-          </span>
-          <span className="text-[24px] font-bold text-[#adc7ff]">LearnSphere</span>
-        </a>
+        <BrandLogo />
       </header>
 
       <main className="relative z-10 flex min-h-[calc(100vh-120px)] items-center justify-center px-4 py-10 md:px-8 lg:px-10">

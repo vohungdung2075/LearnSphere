@@ -2,12 +2,14 @@ import dotenv from "dotenv";
 import mongoose from "mongoose"; 
 import app from "./app.js"; 
 import connectDB from "./config/database.js"; 
+import { startCourseCleanupScheduler } from "./services/course-cleanup.service.js";
 
 dotenv.config(); 
 
 const PORT = process.env.PORT || 5000; 
 
 await connectDB(); 
+startCourseCleanupScheduler();
 
 const server = app.listen(PORT, () => {
 	console.log(`Server is running on port ${PORT}`); //

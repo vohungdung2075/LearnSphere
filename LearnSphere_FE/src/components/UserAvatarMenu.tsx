@@ -15,6 +15,13 @@ const menuItems = [
 export function UserAvatarMenu({ name, role, avatarSrc }: UserAvatarMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const initials = name
+    .split(' ')
+    .filter(Boolean)
+    .slice(-2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
 
   useEffect(() => {
     function handlePointerDown(event: PointerEvent) {
@@ -41,7 +48,7 @@ export function UserAvatarMenu({ name, role, avatarSrc }: UserAvatarMenuProps) {
   return (
     <div className="relative" ref={menuRef}>
       <button
-        className="flex items-center gap-3 border-l border-[#414754] pl-4 text-left"
+        className="flex items-center gap-3 border-l border-[#414754]/70 pl-3 text-left sm:pl-4"
         type="button"
         aria-haspopup="menu"
         aria-expanded={isOpen}
@@ -51,22 +58,28 @@ export function UserAvatarMenu({ name, role, avatarSrc }: UserAvatarMenuProps) {
           <span className="block text-[14px] leading-tight text-[#dde2f4]">{name}</span>
           <span className="block text-[12px] text-[#8b90a0]">{role}</span>
         </span>
-        <img
-          className="h-10 w-10 rounded-full border border-[#adc7ff]/20 object-cover transition-colors hover:border-[#adc7ff]/60"
-          src={avatarSrc}
-          alt={name}
-        />
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[#adc7ff]/20 bg-[#242a37] text-[13px] font-bold text-[#adc7ff] shadow-lg shadow-black/20 transition-colors hover:border-[#adc7ff]/60">
+          {avatarSrc ? (
+            <img
+              className="h-full w-full object-cover"
+              src={avatarSrc}
+              alt={name}
+            />
+          ) : (
+            initials || 'LS'
+          )}
+        </span>
       </button>
 
       {isOpen && (
         <div
-          className="absolute right-0 z-[70] mt-2 w-56 overflow-hidden rounded-xl border border-[#414754] bg-[#161c28]/95 py-2 shadow-2xl backdrop-blur-md"
+          className="absolute right-0 z-[70] mt-2 w-56 overflow-hidden rounded-xl border border-white/5 bg-[#161c28]/95 py-2 shadow-2xl backdrop-blur-xl"
           role="menu"
         >
           {menuItems.map((item) => (
             <a
               key={item.label}
-              className="flex items-center px-4 py-2 text-[14px] text-[#dde2f4] transition-colors hover:bg-[#2f3542]"
+              className="flex items-center px-4 py-2.5 text-[14px] text-[#dde2f4] transition-colors hover:bg-[#2f3542]"
               href={item.href}
               role="menuitem"
               onClick={() => setIsOpen(false)}
@@ -75,9 +88,9 @@ export function UserAvatarMenu({ name, role, avatarSrc }: UserAvatarMenuProps) {
               {item.label}
             </a>
           ))}
-          <div className="my-1 border-t border-[#414754]" />
+          <div className="my-1 border-t border-white/5" />
           <a
-            className="flex items-center px-4 py-2 text-[14px] text-[#ffb4ab] transition-colors hover:bg-[#2f3542]"
+            className="flex items-center px-4 py-2.5 text-[14px] text-[#ffb4ab] transition-colors hover:bg-[#2f3542]"
             href="/login"
             role="menuitem"
             onClick={() => {

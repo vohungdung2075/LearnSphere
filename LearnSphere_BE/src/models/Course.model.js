@@ -41,6 +41,12 @@ const CourseSchema = new mongoose.Schema(
 			ref: "User",
 			default: null,
 		},
+		deleted_reason: {
+			type: String,
+			default: "",
+			trim: true,
+			maxlength: 500,
+		},
 	},
 	{ timestamps: true },
 );

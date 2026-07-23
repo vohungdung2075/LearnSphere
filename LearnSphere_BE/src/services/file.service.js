@@ -1,17 +1,152 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import mongoose from "mongoose";
-import { PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import {
+	DeleteObjectsCommand,
+	GetObjectCommand,
+	HeadObjectCommand,
+	PutObjectCommand,
+	paginateListObjectsV2,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import s3Client from "../config/s3.js";
 import Course from "../models/Course.model.js";
 import Lesson from "../models/Lesson.model.js";
 import Enrollment from "../models/Enrollment.model.js";
+import User from "../models/User.model.js";
 
 const MB = 1024 * 1024;
 
+const getS3Bucket = () => {
+	if (!process.env.AWS_S3_BUCKET) throw new Error("S3_NOT_CONFIGURED");
+	return process.env.AWS_S3_BUCKET;
+};
+
+const throwIfDeleteFailed = (response) => {
+	if (response.Errors?.length) {
+		const failedKeys = response.Errors.map((item) => item.Key).filter(Boolean);
+		const error = new Error("S3_DELETE_FAILED");
+		error.failedKeys = failedKeys;
+		throw error;
+	}
+};
+
+export const deleteS3Objects = async (fileKeys = []) => {
+	const keys = [...new Set(fileKeys.filter((key) => typeof key === "string" && key.trim()).map((key) => key.trim()))];
+	if (!keys.length) return { deleted_count: 0 };
+
+	try {
+		let deletedCount = 0;
+		for (let index = 0; index < keys.length; index += 1000) {
+			const chunk = keys.slice(index, index + 1000);
+			const response = await s3Client.send(new DeleteObjectsCommand({
+				Bucket: getS3Bucket(),
+				Delete: {
+					Objects: chunk.map((Key) => ({ Key })),
+					Quiet: true,
+				},
+			}));
+			throwIfDeleteFailed(response);
+			deletedCount += chunk.length;
+		}
+		return { deleted_count: deletedCount };
+	} catch (error) {
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
+		const wrappedError = new Error("S3_DELETE_FAILED");
+		wrappedError.cause = error;
+		throw wrappedError;
+	}
+};
+
+export const deleteCourseS3Prefix = async (courseId) => {
+	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
+	const prefix = `courses/${courseId}/`;
+	let deletedCount = 0;
+
+	try {
+		const paginator = paginateListObjectsV2(
+			{ client: s3Client },
+			{ Bucket: getS3Bucket(), Prefix: prefix },
+		);
+
+		for await (const page of paginator) {
+			const keys = (page.Contents ?? [])
+				.map((object) => object.Key)
+				.filter((key) => typeof key === "string" && key.startsWith(prefix));
+			if (!keys.length) continue;
+
+			const response = await s3Client.send(new DeleteObjectsCommand({
+				Bucket: getS3Bucket(),
+				Delete: {
+					Objects: keys.map((Key) => ({ Key })),
+					Quiet: true,
+				},
+			}));
+			throwIfDeleteFailed(response);
+			deletedCount += keys.length;
+		}
+
+		return { deleted_count: deletedCount, prefix };
+	} catch (error) {
+		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
+		const wrappedError = new Error("S3_DELETE_FAILED");
+		wrappedError.cause = error;
+		throw wrappedError;
+	}
+};
+
+const validateInternalFileKey = (fileKey) => {
+	if (
+		typeof fileKey !== "string" ||
+		!fileKey.startsWith("courses/") ||
+		fileKey.includes("..") ||
+		fileKey.includes("\\")
+	) {
+		throw new Error("INVALID_FILE_KEY");
+	}
+	return fileKey;
+};
+
+export const getS3ObjectMetadata = async (fileKey) => {
+	const Key = validateInternalFileKey(fileKey);
+	try {
+		return await s3Client.send(new HeadObjectCommand({ Bucket: getS3Bucket(), Key }));
+	} catch (error) {
+		throw new Error("S3_READ_FAILED", { cause: error });
+	}
+};
+
+export const downloadS3ObjectBuffer = async (fileKey, maxBytes) => {
+	const Key = validateInternalFileKey(fileKey);
+	const metadata = await getS3ObjectMetadata(Key);
+	if (Number.isFinite(maxBytes) && metadata.ContentLength > maxBytes) throw new Error("AI_DOCUMENT_TOO_LARGE");
+
+	try {
+		const response = await s3Client.send(new GetObjectCommand({ Bucket: getS3Bucket(), Key }));
+		const bytes = await response.Body.transformToByteArray();
+		return { buffer: Buffer.from(bytes), content_type: metadata.ContentType, size: metadata.ContentLength };
+	} catch (error) {
+		if (error.message === "AI_DOCUMENT_TOO_LARGE") throw error;
+		throw new Error("S3_READ_FAILED", { cause: error });
+	}
+};
+
+export const createInternalS3DownloadUrl = async (fileKey, expiresIn = 900) => {
+	const Key = validateInternalFileKey(fileKey);
+	const command = new GetObjectCommand({ Bucket: getS3Bucket(), Key });
+	return getSignedUrl(s3Client, command, { expiresIn });
+};
+
 const uploadRules = {
+	"profile-avatars": {
+		contentTypes: {
+			"image/jpeg": [".jpg", ".jpeg"],
+			"image/png": [".png"],
+			"image/webp": [".webp"],
+		},
+		maxSizeBytes: 5 * MB,
+	},
 	thumbnails: {
 		contentTypes: {
 			"image/jpeg": [".jpg", ".jpeg"],
@@ -113,6 +248,70 @@ export const createPresignedUpload = async ({ course_id, file_name, content_type
 	};
 };
 
+export const createProfileAvatarUpload = async ({ file_name, content_type, file_size } = {}, userId) => {
+	if (typeof file_name !== "string" || typeof content_type !== "string") {
+		throw new Error("INVALID_FILE_REQUEST");
+	}
+
+	const rule = uploadRules["profile-avatars"];
+	validateExtensionAndContentType(file_name, content_type, rule);
+	if (!Number.isSafeInteger(file_size) || file_size < 1) throw new Error("INVALID_FILE_SIZE");
+	if (file_size > rule.maxSizeBytes) throw new Error("FILE_TOO_LARGE");
+
+	const safeFileName = cleanFileName(file_name);
+	const fileKey = `users/${userId}/avatars/${crypto.randomUUID()}-${safeFileName}`;
+	const command = new PutObjectCommand({
+		Bucket: process.env.AWS_S3_BUCKET,
+		Key: fileKey,
+		ContentType: content_type,
+		ContentLength: file_size,
+	});
+	const expiresIn = getExpirySeconds(process.env.S3_UPLOAD_URL_EXPIRES_IN, 300, 900);
+	const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn });
+
+	return {
+		upload_url: uploadUrl,
+		file_key: fileKey,
+		content_type,
+		file_size,
+		max_size_bytes: rule.maxSizeBytes,
+		expires_in: expiresIn,
+	};
+};
+
+const validateProfileAvatarKey = async (userId, fileKey) => {
+	if (typeof fileKey !== "string" || !fileKey.trim()) throw new Error("INVALID_AVATAR_KEY");
+
+	const normalizedKey = fileKey.trim();
+	const expectedPrefix = `users/${userId}/avatars/`;
+	if (normalizedKey.includes("..") || normalizedKey.includes("\\") || !normalizedKey.startsWith(expectedPrefix)) {
+		throw new Error("INVALID_AVATAR_KEY");
+	}
+
+	let objectMetadata;
+	try {
+		objectMetadata = await s3Client.send(new HeadObjectCommand({
+			Bucket: process.env.AWS_S3_BUCKET,
+			Key: normalizedKey,
+		}));
+	} catch (error) {
+		if (error?.$metadata?.httpStatusCode === 404 || error?.name === "NotFound" || error?.name === "NoSuchKey") {
+			throw new Error("FILE_NOT_FOUND_IN_S3");
+		}
+		throw new Error("S3_HEAD_FAILED", { cause: error });
+	}
+
+	const rule = uploadRules["profile-avatars"];
+	const contentType = objectMetadata.ContentType?.split(";")[0].trim().toLowerCase();
+	validateExtensionAndContentType(normalizedKey, contentType, rule);
+	if (!Number.isFinite(objectMetadata.ContentLength) || objectMetadata.ContentLength < 1) throw new Error("INVALID_FILE_SIZE");
+	if (objectMetadata.ContentLength > rule.maxSizeBytes) throw new Error("FILE_TOO_LARGE");
+
+	return normalizedKey;
+};
+
+export const validateOwnProfileAvatarKey = (userId, fileKey) => validateProfileAvatarKey(userId, fileKey);
+
 export const validateStoredFileKey = async ({ courseId, fileKey, folder, invalidKeyError = "INVALID_FILE_KEY" }) => {
 	const rule = uploadRules[folder];
 	if (!rule || typeof fileKey !== "string" || !fileKey.trim()) {
@@ -159,6 +358,15 @@ const createDownloadUrl = async (fileKey) => {
 		file_key: fileKey,
 		expires_in: expiresIn,
 	};
+};
+
+export const createProfileAvatarDownload = async (userId) => {
+	const user = await User.findById(userId).select("avatar_key");
+	if (!user) throw new Error("USER_NOT_FOUND");
+	if (!user.avatar_key) throw new Error("FILE_NOT_FOUND_IN_RESOURCE");
+
+	const validatedKey = await validateProfileAvatarKey(user._id, user.avatar_key);
+	return createDownloadUrl(validatedKey);
 };
 
 export const createPresignedDownload = async ({ lesson_id, target_type } = {}, userId, userRole) => {

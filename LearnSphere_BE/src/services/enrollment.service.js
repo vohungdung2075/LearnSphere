@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
+import { createNotification } from "./notification.service.js";
 
 export const enrollCourse = async (courseId, studentId) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
@@ -24,6 +25,26 @@ export const enrollCourse = async (courseId, studentId) => {
 		status,
 		approved_at: status === "active" ? new Date() : null,
 	});
+
+	if (status === "pending") {
+		await createNotification({
+			recipient_id: course.created_by,
+			type: "enrollment",
+			title: "Có yêu cầu đăng ký mới",
+			message: `Một học viên vừa gửi yêu cầu tham gia khóa học "${course.title}".`,
+			link: `/lesson-management?course_id=${courseId}`,
+			metadata: { action: "review_enrollment", course_id: courseId, enrollment_id: enrollment._id },
+		});
+	} else {
+		await createNotification({
+			recipient_id: studentId,
+			type: "enrollment",
+			title: "Đăng ký khóa học thành công",
+			message: `Bạn đã được ghi danh vào khóa học "${course.title}".`,
+			link: `/lesson-detail?course_id=${courseId}`,
+			metadata: { action: "start_learning", course_id: courseId, enrollment_id: enrollment._id },
+		});
+	}
 
 	return enrollment;
 };
@@ -100,6 +121,15 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 	await enrollment.save();
 	await enrollment.populate("user_id", "full_name email role");
 
+	await createNotification({
+		recipient_id: enrollment.user_id._id ?? enrollment.user_id,
+		type: "enrollment",
+		title: "Yêu cầu đăng ký đã được duyệt",
+		message: `Bạn đã được duyệt vào khóa học "${course.title}".`,
+		link: `/lesson-detail?course_id=${courseId}`,
+		metadata: { action: "start_learning", course_id: courseId, enrollment_id: enrollment._id },
+	});
+
 	return enrollment;
 };
 
@@ -120,6 +150,17 @@ export const rejectEnrollment = async (courseId, enrollmentId, userId, userRole)
 
 	if (enrollment.status === "active") throw new Error("CANNOT_REJECT_ACTIVE_ENROLLMENT");
 
+	const studentId = enrollment.user_id;
 	await enrollment.deleteOne();
+
+	await createNotification({
+		recipient_id: studentId,
+		type: "enrollment",
+		title: "Yêu cầu đăng ký bị từ chối",
+		message: `Yêu cầu tham gia khóa học "${course.title}" của bạn chưa được chấp nhận.`,
+		link: `/my-courses`,
+		metadata: { action: "view_my_courses", course_id: courseId, enrollment_id: enrollmentId },
+	});
+
 	return { message: "Enrollment request rejected successfully" };
 };

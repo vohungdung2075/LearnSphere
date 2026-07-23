@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
+import Enrollment from "../models/Enrollment.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
 import { validateStoredFileKey } from "./file.service.js";
 
@@ -25,7 +26,18 @@ export const getAllCourses = async () => {
 		.populate("created_by", "full_name role") 
 		.sort({ createdAt: -1 }); 
 
-	return courses;
+	const enrollmentCounts = await Enrollment.aggregate([
+		{ $match: { status: "active", course_id: { $in: courses.map((course) => course._id) } } },
+		{ $group: { _id: "$course_id", enrollment_count: { $sum: 1 } } },
+	]);
+	const enrollmentCountByCourseId = new Map(
+		enrollmentCounts.map((item) => [item._id.toString(), item.enrollment_count]),
+	);
+
+	return courses.map((course) => ({
+		...course.toObject(),
+		enrollment_count: enrollmentCountByCourseId.get(course._id.toString()) ?? 0,
+	}));
 };
 
 
@@ -48,7 +60,7 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
 	if (!course) throw new Error("COURSE_NOT_FOUND");
     
 	const isOwner = course.created_by.toString() === userId.toString();
-	if (userRole !== "admin" && !isOwner) throw new Error("FORBIDDEN_COURSE_ACTION");
+	if (userRole !== "tutor" || !isOwner) throw new Error("FORBIDDEN_COURSE_ACTION");
     
 	if (title === undefined && description === undefined && thumbnail_key === undefined && enrollment_type === undefined) {
 		throw new Error("NO_FIELDS_TO_UPDATE");
@@ -86,8 +98,12 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
 };
 
 
-export const deleteCourse = async (courseId, userId, userRole) => {
+export const deleteCourse = async (courseId, userId, userRole, reason) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID"); 
+	if (reason !== undefined && typeof reason !== "string") throw new Error("INVALID_DELETE_REASON");
+
+	const normalizedReason = reason?.trim() ?? "";
+	if (normalizedReason.length > 500) throw new Error("INVALID_DELETE_REASON");
 
 	const course = await Course.findOne({ _id: courseId, is_deleted: false }); 
 	if (!course) throw new Error("COURSE_NOT_FOUND"); 
@@ -105,6 +121,7 @@ export const deleteCourse = async (courseId, userId, userRole) => {
 	course.is_deleted = true;
 	course.deleted_at = new Date();
 	course.deleted_by = userId;
+	course.deleted_reason = normalizedReason;
 
     await course.save();
 	return { message: "Course moved to trash successfully" };
@@ -138,6 +155,7 @@ export const restoreCourse = async (courseId, userId, userRole) => {
 	course.is_deleted = false;
 	course.deleted_at = null;
 	course.deleted_by = null;
+	course.deleted_reason = "";
 
 	const restoredCourse = await course.save();
 	return restoredCourse;

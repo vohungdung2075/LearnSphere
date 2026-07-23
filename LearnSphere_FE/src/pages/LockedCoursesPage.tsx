@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
+import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { canManageContent, getRoleLabel, getRoleNav } from '../lib/roleAccess';
 import { api, getStoredUser, type Course } from '../services/api';
@@ -21,6 +22,10 @@ export function LockedCoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [courseToRestore, setCourseToRestore] = useState<Course | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [courseToPurge, setCourseToPurge] = useState<Course | null>(null);
+  const [isPurging, setIsPurging] = useState(false);
 
   async function loadDeletedCourses() {
     if (!canManageContent(user)) return;
@@ -41,16 +46,33 @@ export function LockedCoursesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?._id, user?.role]);
 
-  async function handleRestore(courseId: string) {
-    const confirmed = window.confirm('Mở khóa khóa học này và đưa trở lại danh sách chính?');
-    if (!confirmed) return;
-
+  async function handleRestore() {
+    if (!courseToRestore) return;
+    setIsRestoring(true);
     try {
-      const result = await api.restoreCourse(courseId);
+      const result = await api.restoreCourse(courseToRestore._id);
       setMessage(result.message);
+      setCourseToRestore(null);
       await loadDeletedCourses();
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Không thể mở khóa khóa học');
+      setMessage(err instanceof Error ? err.message : 'Không thể khôi phục khóa học');
+    } finally {
+      setIsRestoring(false);
+    }
+  }
+
+  async function handlePermanentDelete() {
+    if (!courseToPurge) return;
+    setIsPurging(true);
+    try {
+      const result = await api.permanentlyDeleteCourse(courseToPurge._id);
+      setMessage(`${result.message} (${result.deleted_s3_objects} file S3)`);
+      setCourseToPurge(null);
+      await loadDeletedCourses();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể xóa vĩnh viễn khóa học');
+    } finally {
+      setIsPurging(false);
     }
   }
 
@@ -70,32 +92,139 @@ export function LockedCoursesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d131f] text-[#dde2f4]">
+    <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <RoleSidebar activePath="/locked-courses" items={navItems} user={user} />
+      <AppToast message={message} tone="warning" onClose={() => setMessage('')} />
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-8 md:pl-72 md:pr-8">
-        <section className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
+      {courseToRestore && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4 py-6">
+          <section className="w-full max-w-[520px] rounded-2xl border border-[#354055] bg-[#111827] p-5 shadow-2xl shadow-black/40">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#24dfba]/30 bg-[#24dfba]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-[#24dfba]">
+                  <span className="material-symbols-outlined text-[16px]">lock_open</span>
+                  Khôi phục
+                </span>
+                <h2 className="mt-4 text-[24px] font-extrabold text-white">Khôi phục khóa học này?</h2>
+                <p className="mt-2 text-[14px] leading-6 text-[#b8c1d6]">{courseToRestore.title}</p>
+              </div>
+              <button
+                className="rounded-lg border border-[#354055] p-2 text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                onClick={() => {
+                  if (!isRestoring) setCourseToRestore(null);
+                }}
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-[#354055] bg-[#070d19] p-3">
+              <p className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Lý do khóa hiện tại</p>
+              <p className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6 text-[#e7ecff]">
+                {courseToRestore.deleted_reason || 'Chưa có lý do khóa.'}
+              </p>
+            </div>
+
+            <p className="mt-4 text-[14px] leading-6 text-[#b8c1d6]">
+              Sau khi khôi phục, khóa học sẽ quay lại danh sách khóa học chính và người học có thể truy cập lại nội dung.
+            </p>
+
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-xl border border-[#354055] px-5 py-3 font-mono text-[12px] font-bold text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                disabled={isRestoring}
+                onClick={() => setCourseToRestore(null)}
+              >
+                Hủy
+              </button>
+              <button
+                className="rounded-xl bg-[#24dfba] px-5 py-3 font-mono text-[12px] font-black uppercase tracking-wide text-[#00382c] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={isRestoring}
+                onClick={() => void handleRestore()}
+              >
+                {isRestoring ? 'Đang khôi phục...' : 'Khôi phục'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {courseToPurge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6">
+          <section className="w-full max-w-[540px] rounded-2xl border border-[#ffb4ab]/30 bg-[#111827] p-5 shadow-2xl shadow-black/50">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#ffb4ab]/30 bg-[#ffb4ab]/10 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-[#ffb4ab]">
+                  <span className="material-symbols-outlined text-[16px]">delete_forever</span>
+                  Không thể hoàn tác
+                </span>
+                <h2 className="mt-4 text-[24px] font-extrabold text-white">Xóa vĩnh viễn khóa học?</h2>
+                <p className="mt-2 text-[14px] leading-6 text-[#b8c1d6]">{courseToPurge.title}</p>
+              </div>
+              <button
+                className="rounded-lg border border-[#354055] p-2 text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                aria-label="Đóng"
+                onClick={() => {
+                  if (!isPurging) setCourseToPurge(null);
+                }}
+              >
+                <span className="material-symbols-outlined text-[18px]">close</span>
+              </button>
+            </div>
+
+            <div className="mt-5 rounded-xl border border-[#ffb4ab]/25 bg-[#ffb4ab]/10 p-4 text-[14px] leading-6 text-[#ffd9d5]">
+              Toàn bộ video, tài liệu, thumbnail trên S3 cùng bài học, quiz, tiến độ, lượt ghi danh và dữ liệu liên quan sẽ bị xóa. Khóa học không thể khôi phục sau thao tác này.
+            </div>
+
+            <div className="mt-5 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                className="rounded-xl border border-[#354055] px-5 py-3 font-mono text-[12px] font-bold text-[#b8c1d6] transition hover:bg-[#1a2435]"
+                type="button"
+                disabled={isPurging}
+                onClick={() => setCourseToPurge(null)}
+              >
+                Hủy
+              </button>
+              <button
+                className="rounded-xl bg-[#ffb4ab] px-5 py-3 font-mono text-[12px] font-black uppercase tracking-wide text-[#690005] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                disabled={isPurging}
+                onClick={() => void handlePermanentDelete()}
+              >
+                {isPurging ? 'Đang xóa dữ liệu...' : 'Xóa vĩnh viễn'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      <main className="mx-auto max-w-[1180px] space-y-5 px-4 py-6 md:pl-64 md:pr-6">
+        <section className="flex flex-col justify-between gap-4 rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:flex-row md:items-end">
           <div>
             <p className="mb-2 font-mono text-[12px] uppercase tracking-wider text-[#8b90a0]">{getRoleLabel(user?.role)}</p>
             <h1 className="text-[32px] font-semibold">Khóa học bị khóa</h1>
             <p className="mt-1 text-[#c1c6d7]">
-              Đây là danh sách khóa học đang ở trạng thái xóa mềm. Admin có thể mở khóa; giảng viên thấy các khóa của mình để theo dõi trạng thái.
+              Danh sách khóa học đã xóa mềm. Admin và giảng viên sở hữu khóa học có thể khôi phục hoặc xóa vĩnh viễn cả dữ liệu S3.
             </p>
           </div>
-          <span className="rounded-lg border border-white/5 bg-[#161c28] px-4 py-2 font-mono text-[12px] text-[#8b90a0]">
+          <span className="rounded-xl border border-[#354055] bg-[#070d19] px-4 py-2 font-mono text-[12px] text-[#8b90a0]">
             {courses.length} khóa học
           </span>
         </section>
 
-        {(isLoading || message) && (
+        {isLoading && (
           <div className="rounded-lg border border-[#ffc080]/30 bg-[#ffc080]/10 px-4 py-3 text-[14px] text-[#ffc080]">
-            {isLoading ? 'Đang tải dữ liệu...' : message}
+            Đang tải dữ liệu...
           </div>
         )}
 
         {!isLoading && !courses.length ? (
-          <section className="rounded-xl border border-dashed border-[#414754] bg-[#161c28] p-10 text-center">
+          <section className="rounded-2xl border border-dashed border-[#354055] bg-[#111827]/92 p-10 text-center shadow-xl shadow-black/20">
             <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">lock_open</span>
             <h2 className="text-[22px] font-semibold">Không có khóa học bị khóa</h2>
             <p className="mt-2 text-[#c1c6d7]">Khi có khóa học bị tạm khóa hoặc xóa mềm, khóa học sẽ xuất hiện ở đây.</p>
@@ -105,7 +234,7 @@ export function LockedCoursesPage() {
             {courses.map((course) => {
               const creator = typeof course.created_by === 'object' ? course.created_by.full_name : 'Chưa rõ';
               return (
-                <article key={course._id} className="rounded-xl border border-white/5 bg-[#161c28] p-5">
+                <article key={course._id} className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <h2 className="text-[22px] font-semibold">{course.title}</h2>
@@ -120,11 +249,24 @@ export function LockedCoursesPage() {
                     <p>Ngày khóa: {formatDate(course.deleted_at)}</p>
                     <p>Trạng thái API: xóa mềm</p>
                   </div>
-                  {user?.role === 'admin' && (
-                    <button className="mt-5 rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => void handleRestore(course._id)}>
-                      Mở khóa
+                  <div className="mt-4 rounded-xl border border-[#354055] bg-[#070d19] p-3">
+                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#8b90a0]">Lý do khóa</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-[14px] leading-6 text-[#e7ecff]">
+                      {course.deleted_reason || 'Chưa có lý do khóa.'}
+                    </p>
+                  </div>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button className="rounded-lg bg-[#24dfba] px-5 py-3 font-mono text-[13px] font-bold text-[#00382c]" type="button" onClick={() => setCourseToRestore(course)}>
+                      Khôi phục
                     </button>
-                  )}
+                    <button
+                      className="rounded-lg border border-[#ffb4ab]/50 bg-[#ffb4ab]/10 px-5 py-3 font-mono text-[13px] font-bold text-[#ffb4ab] transition hover:bg-[#ffb4ab]/20"
+                      type="button"
+                      onClick={() => setCourseToPurge(course)}
+                    >
+                      Xóa vĩnh viễn
+                    </button>
+                  </div>
                 </article>
               );
             })}
