@@ -17,12 +17,12 @@ type CourseForm = {
   enrollment_type: EnrollmentType;
 };
 
-type SortMode = 'popular' | 'newest' | 'title';
+type SortMode = 'learning' | 'popular' | 'newest' | 'title';
 type EnrollmentFilter = 'all' | 'open' | 'approval_required';
 type StudentStatusFilter = 'all' | 'not_enrolled' | 'active' | 'pending';
 
-const sortOptions: Array<{ value: SortMode; label: string; icon: string }> = [
-  { value: 'popular', label: 'Phù hợp nhất', icon: 'stars' },
+const commonSortOptions: Array<{ value: SortMode; label: string; icon: string }> = [
+  { value: 'popular', label: 'Phổ biến nhất', icon: 'groups' },
   { value: 'newest', label: 'Mới nhất', icon: 'fiber_new' },
   { value: 'title', label: 'Tên A-Z', icon: 'sort_by_alpha' },
 ];
@@ -34,6 +34,17 @@ function getCourseHref(courseId: string) {
 export function CourseCatalogPage() {
   const user = getStoredUser();
   const navItems = useMemo(() => getRoleNav(user), [user]);
+  const defaultSortMode: SortMode = canStudy(user)
+    ? 'learning'
+    : user?.role === 'tutor' || user?.role === 'admin'
+      ? 'newest'
+      : 'popular';
+  const sortOptions = useMemo(
+    () => canStudy(user)
+      ? [{ value: 'learning' as const, label: 'Đang học trước', icon: 'play_circle' }, ...commonSortOptions]
+      : commonSortOptions,
+    [user?.role],
+  );
   const [courses, setCourses] = useState<Course[]>([]);
   const [enrollmentStatusByCourseId, setEnrollmentStatusByCourseId] = useState<Record<string, Enrollment['status']>>({});
   const [progressByCourseId, setProgressByCourseId] = useState<Record<string, CourseProgress>>({});
@@ -43,7 +54,7 @@ export function CourseCatalogPage() {
   const [isCreateCourseOpen, setIsCreateCourseOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
-  const [sortMode, setSortMode] = useState<SortMode>('popular');
+  const [sortMode, setSortMode] = useState<SortMode>(defaultSortMode);
   const [enrollmentFilter, setEnrollmentFilter] = useState<EnrollmentFilter>('all');
   const [studentStatusFilter, setStudentStatusFilter] = useState<StudentStatusFilter>('all');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -248,9 +259,18 @@ export function CourseCatalogPage() {
     return [...filtered].sort((first, second) => {
       if (sortMode === 'title') return first.title.localeCompare(second.title, 'vi');
       if (sortMode === 'newest') return second._id.localeCompare(first._id);
-      const firstActive = enrollmentStatusByCourseId[first._id] === 'active' ? 1 : 0;
-      const secondActive = enrollmentStatusByCourseId[second._id] === 'active' ? 1 : 0;
-      return secondActive - firstActive || first.title.localeCompare(second.title, 'vi');
+      const byPopularity =
+        (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
+        second._id.localeCompare(first._id);
+      if (sortMode === 'popular') return byPopularity;
+
+      const getLearningPriority = (courseId: string) => {
+        const status = enrollmentStatusByCourseId[courseId];
+        if (status === 'active') return 0;
+        if (!status) return 1;
+        return 2;
+      };
+      return getLearningPriority(first._id) - getLearningPriority(second._id) || byPopularity;
     });
   }, [courses, enrollmentFilter, enrollmentStatusByCourseId, query, sortMode, studentStatusFilter, user]);
 
@@ -375,7 +395,7 @@ export function CourseCatalogPage() {
             <div className="relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10">
               <span className="mb-4 inline-flex w-fit items-center gap-1 rounded-full border border-[#24dfba]/20 bg-[#24dfba]/10 px-3 py-1 font-mono text-[12px] font-bold text-[#24dfba]">
                 <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>star</span>
-                KHÓA HỌC NỔI BẬT
+                NHIỀU NGƯỜI HỌC NHẤT
               </span>
               <h1 className="text-[32px] font-bold leading-tight text-[#dde2f4] md:text-[46px]">
                 {featuredCourse?.title ?? 'Khám phá khóa học trong LearnSphere'}
@@ -437,41 +457,63 @@ export function CourseCatalogPage() {
                   )}
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                  <button
-                    className={`inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-mono text-[12px] font-bold transition active:scale-95 ${
-                      isFilterOpen
-                        ? 'border-[#ffc080]/50 bg-[#ffc080]/10 text-[#ffc080]'
-                        : 'border-[#adc7ff]/50 bg-[#161c28] text-[#adc7ff] hover:bg-[#adc7ff]/10'
-                    }`}
-                    type="button"
-                    aria-expanded={isFilterOpen}
-                    onClick={() => setIsFilterOpen((current) => !current)}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">filter_list</span>
-                    Bộ lọc
-                  </button>
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/5 bg-[#161c28] p-1.5">
-                    <span className="px-2 font-mono text-[12px] text-[#8b90a0]">Sắp xếp:</span>
-                    {sortOptions.map((item) => {
-                      const isSelected = sortMode === item.value;
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <label className="flex min-h-11 w-full items-center gap-2 rounded-xl border border-[#354055] bg-[#080e1a] px-4 text-[#adc7ff] transition focus-within:border-[#adc7ff] focus-within:ring-2 focus-within:ring-[#adc7ff]/15 xl:max-w-md">
+                    <span className="material-symbols-outlined text-[20px]">search</span>
+                    <input
+                      className="min-w-0 flex-1 bg-transparent text-[14px] text-[#dde2f4] outline-none placeholder:text-[#78839a]"
+                      placeholder="Tìm theo tên hoặc mô tả khóa học..."
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                    {query && (
+                      <button
+                        className="rounded-full p-1 text-[#8b90a0] transition hover:bg-[#242a37] hover:text-[#dde2f4]"
+                        type="button"
+                        aria-label="Xóa từ khóa tìm kiếm"
+                        onClick={() => setQuery('')}
+                      >
+                        <span className="material-symbols-outlined block text-[17px]">close</span>
+                      </button>
+                    )}
+                  </label>
 
-                      return (
-                        <button
-                          key={item.value}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-bold transition active:scale-95 ${
-                            isSelected
-                              ? 'bg-[#adc7ff] text-[#002e68] shadow-lg shadow-[#adc7ff]/10'
-                              : 'text-[#c1c6d7] hover:bg-[#242a37] hover:text-[#dde2f4]'
-                          }`}
-                          type="button"
-                          onClick={() => setSortMode(item.value)}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">{isSelected ? 'check_circle' : item.icon}</span>
-                          {item.label}
-                        </button>
-                      );
-                    })}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <button
+                      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-mono text-[12px] font-bold transition active:scale-95 ${
+                        isFilterOpen
+                          ? 'border-[#ffc080]/50 bg-[#ffc080]/10 text-[#ffc080]'
+                          : 'border-[#adc7ff]/50 bg-[#161c28] text-[#adc7ff] hover:bg-[#adc7ff]/10'
+                      }`}
+                      type="button"
+                      aria-expanded={isFilterOpen}
+                      onClick={() => setIsFilterOpen((current) => !current)}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">filter_list</span>
+                      Bộ lọc
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/5 bg-[#161c28] p-1.5">
+                      <span className="px-2 font-mono text-[12px] text-[#8b90a0]">Sắp xếp:</span>
+                      {sortOptions.map((item) => {
+                        const isSelected = sortMode === item.value;
+
+                        return (
+                          <button
+                            key={item.value}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-bold transition active:scale-95 ${
+                              isSelected
+                                ? 'bg-[#adc7ff] text-[#002e68] shadow-lg shadow-[#adc7ff]/10'
+                                : 'text-[#c1c6d7] hover:bg-[#242a37] hover:text-[#dde2f4]'
+                            }`}
+                            type="button"
+                            onClick={() => setSortMode(item.value)}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">{isSelected ? 'check_circle' : item.icon}</span>
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -485,11 +527,6 @@ export function CourseCatalogPage() {
                     </button>
                   </div>
                   <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-                    <label className="block space-y-1.5">
-                      <span className="font-mono text-[11px] uppercase tracking-wide text-[#8b90a0]">Tìm kiếm</span>
-                      <input className="h-9 w-full rounded-full border border-[#414754] bg-[#080e1a] px-4 text-[13px] text-[#dde2f4] outline-none placeholder:text-[#8b90a0] focus:border-[#adc7ff]" placeholder="Tìm khóa học..." value={query} onChange={(event) => setQuery(event.target.value)} />
-                    </label>
-
                     <div>
                       <p className="mb-2.5 font-mono text-[11px] uppercase tracking-wide text-[#8b90a0]">Kiểu đăng ký</p>
                       <div className="space-y-2.5">
@@ -539,7 +576,7 @@ export function CourseCatalogPage() {
                         setQuery('');
                         setEnrollmentFilter('all');
                         setStudentStatusFilter('all');
-                        setSortMode('popular');
+                        setSortMode(defaultSortMode);
                         setIsFilterOpen(false);
                       }}
                     >
