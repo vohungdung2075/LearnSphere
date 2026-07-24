@@ -58,6 +58,7 @@ export function CourseCatalogPage() {
   const [enrollmentFilter, setEnrollmentFilter] = useState<EnrollmentFilter>('all');
   const [studentStatusFilter, setStudentStatusFilter] = useState<StudentStatusFilter>('all');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [popularCourseIndex, setPopularCourseIndex] = useState(0);
   const [form, setForm] = useState<CourseForm>({
     title: '',
     description: '',
@@ -274,16 +275,39 @@ export function CourseCatalogPage() {
     });
   }, [courses, enrollmentFilter, enrollmentStatusByCourseId, query, sortMode, studentStatusFilter, user]);
 
-  const featuredCourse = useMemo(
+  const popularCourses = useMemo(
     () =>
-      [...courses].sort((first, second) =>
-        (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
-        second._id.localeCompare(first._id),
-      )[0],
+      [...courses]
+        .sort(
+          (first, second) =>
+            (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
+            second._id.localeCompare(first._id),
+        )
+        .slice(0, 4),
     [courses],
   );
-  const featuredImage = featuredCourse ? thumbnailUrls[featuredCourse._id] || heroImage : heroImage;
+  const popularCourse = popularCourses[popularCourseIndex];
+  const popularImage = popularCourse ? thumbnailUrls[popularCourse._id] || heroImage : heroImage;
   const activeCourseCount = Object.values(enrollmentStatusByCourseId).filter((status) => status === 'active').length;
+
+  useEffect(() => {
+    setPopularCourseIndex((current) => (current < popularCourses.length ? current : 0));
+
+    if (popularCourses.length <= 1) return undefined;
+    const timer = window.setInterval(() => {
+      setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
+    }, 6000);
+
+    return () => window.clearInterval(timer);
+  }, [popularCourses.length]);
+
+  function showPreviousPopularCourse() {
+    setPopularCourseIndex((current) => (current - 1 + popularCourses.length) % popularCourses.length);
+  }
+
+  function showNextPopularCourse() {
+    setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-[#0d131f] text-[#dde2f4] selection:bg-[#4a8eff] selection:text-[#00285b]">
@@ -390,27 +414,31 @@ export function CourseCatalogPage() {
       <main className="w-full flex-grow pb-24 md:pl-64">
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8">
           <section className="relative overflow-hidden rounded-xl border border-white/5 bg-[#242a37] shadow-card">
-            <div className="absolute inset-0 z-0 bg-cover bg-center transition-transform duration-700" style={{ backgroundImage: `url(${featuredImage})` }} />
+            <div
+              key={popularCourse?._id ?? 'course-placeholder'}
+              className="course-hero-slide absolute inset-0 z-0 bg-cover bg-center"
+              style={{ backgroundImage: `url(${popularImage})` }}
+            />
             <div className="absolute inset-0 z-10 bg-[linear-gradient(90deg,#0d131f_0%,rgba(13,19,31,0.88)_42%,rgba(13,19,31,0.18)_100%)]" />
             <div className="relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10">
               <span className="mb-4 inline-flex w-fit items-center gap-1 rounded-full border border-[#24dfba]/20 bg-[#24dfba]/10 px-3 py-1 font-mono text-[12px] font-bold text-[#24dfba]">
                 <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>star</span>
-                NHIỀU NGƯỜI HỌC NHẤT
+                KHÓA HỌC PHỔ BIẾN
               </span>
               <h1 className="text-[32px] font-bold leading-tight text-[#dde2f4] md:text-[46px]">
-                {featuredCourse?.title ?? 'Khám phá khóa học trong LearnSphere'}
+                {popularCourse?.title ?? 'Khám phá khóa học trong LearnSphere'}
               </h1>
               <p className="mt-4 line-clamp-2 text-[15px] leading-7 text-[#c1c6d7] md:text-[17px]">
-                {featuredCourse?.description ?? 'Tìm khóa học phù hợp, đăng ký học và tiếp tục lộ trình của bạn trên một giao diện trực quan hơn.'}
+                {popularCourse?.description ?? 'Tìm khóa học phù hợp, đăng ký học và tiếp tục lộ trình của bạn trên một giao diện trực quan hơn.'}
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-4">
-                {featuredCourse ? (
+                {popularCourse ? (
                   <button
                     className="inline-flex items-center gap-2 rounded-lg bg-[#adc7ff] px-6 py-3 font-mono text-[13px] font-bold text-[#002e68] transition hover:shadow-[0_0_24px_rgba(173,199,255,0.35)] active:scale-95"
                     type="button"
-                    onClick={() => handleCourseAction(featuredCourse)}
+                    onClick={() => handleCourseAction(popularCourse)}
                   >
-                    {canStudy(user) ? getStudentAction(featuredCourse).label : 'Xem khóa học'}
+                    {canStudy(user) ? getStudentAction(popularCourse).label : 'Xem khóa học'}
                     <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                   </button>
                 ) : null}
@@ -418,14 +446,48 @@ export function CourseCatalogPage() {
                   <span className="material-symbols-outlined text-[18px]">school</span>
                   <span className="font-mono text-[12px]">{courses.length} khóa học hiện có</span>
                 </div>
-                {featuredCourse && (
+                {popularCourse && (
                   <div className="flex items-center gap-2 text-[#24dfba]">
                     <span className="material-symbols-outlined text-[18px]">group</span>
-                    <span className="font-mono text-[12px]">{featuredCourse.enrollment_count ?? 0} người học</span>
+                    <span className="font-mono text-[12px]">{popularCourse.enrollment_count ?? 0} người đang học</span>
                   </div>
                 )}
               </div>
             </div>
+            {popularCourses.length > 1 && (
+              <div className="absolute bottom-5 right-5 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-[#07101a]/70 px-2 py-1.5 shadow-lg backdrop-blur-md">
+                <button
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/75 transition hover:bg-white/10 hover:text-white"
+                  type="button"
+                  aria-label="Xem khóa học phổ biến trước"
+                  onClick={showPreviousPopularCourse}
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                </button>
+                <div className="flex items-center gap-1.5" aria-label={`Khóa học phổ biến ${popularCourseIndex + 1} trên ${popularCourses.length}`}>
+                  {popularCourses.map((course, index) => (
+                    <button
+                      key={course._id}
+                      className={`h-2 rounded-full transition-all ${
+                        index === popularCourseIndex ? 'w-6 bg-[#24dfba]' : 'w-2 bg-white/35 hover:bg-white/60'
+                      }`}
+                      type="button"
+                      aria-label={`Xem ${course.title}`}
+                      aria-current={index === popularCourseIndex ? 'true' : undefined}
+                      onClick={() => setPopularCourseIndex(index)}
+                    />
+                  ))}
+                </div>
+                <button
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/75 transition hover:bg-white/10 hover:text-white"
+                  type="button"
+                  aria-label="Xem khóa học phổ biến tiếp theo"
+                  onClick={showNextPopularCourse}
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                </button>
+              </div>
+            )}
           </section>
 
           <AppToast message={message} tone={message.startsWith('Đang ') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
@@ -643,7 +705,7 @@ export function CourseCatalogPage() {
                           {enrollmentType}
                         </span>
 
-                        {(canManageCourse || canModerate) && (
+                        {canManageCourse && (
                           <label className="absolute right-4 top-4 z-20 flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-[#07101a]/80 px-3 py-1.5 font-mono text-[11px] font-bold text-[#dbe7ff] opacity-0 shadow-lg shadow-black/20 backdrop-blur-md transition hover:border-[#adc7ff]/50 hover:bg-[#13223a]/90 group-hover:opacity-100 group-focus-within:opacity-100">
                             <span className="material-symbols-outlined text-[15px]">upload</span>
                             Đổi ảnh
@@ -697,8 +759,8 @@ export function CourseCatalogPage() {
                           <div className="min-w-0 space-y-1 font-mono text-[11px] text-white/65">
                             <p className="truncate">Người tạo: {creator}</p>
                             <p className="flex items-center gap-1.5">
-                              <span className="material-symbols-outlined text-[16px]">timer</span>
-                              Nội dung tự học
+                              <span className="material-symbols-outlined text-[16px]">groups</span>
+                              {course.enrollment_count ?? 0} người đang học
                             </p>
                           </div>
                           <button

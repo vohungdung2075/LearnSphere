@@ -153,3 +153,24 @@ pre,
 .sphere-ai-launcher {
   z-index: 2147483646 !important;
 }
+
+@keyframes courseHeroFade {
+  from {
+    opacity: 0.55;
+    transform: scale(1.015);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.course-hero-slide {
+  animation: courseHeroFade 500ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .course-hero-slide {
+    animation: none;
+  }
+}
