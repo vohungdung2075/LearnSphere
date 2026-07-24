@@ -144,24 +144,46 @@ const buildHistoryFilter = ({ userId, course, lesson }) => ({
 	lesson_id: lesson?._id ?? null,
 });
 
-const parseGeneratedQuestions = (rawText, expectedCount) => {
+const createInvalidStructuredResponseError = (reason) => {
+	const error = new Error("AI_INVALID_STRUCTURED_RESPONSE");
+	error.structured_reason = reason;
+	return error;
+};
+
+const parseStructuredPayload = (rawText) => {
+	if (typeof rawText !== "string" || !rawText.trim()) {
+		throw createInvalidStructuredResponseError("empty_response");
+	}
+
 	const withoutFence = rawText
 		.replace(/^```(?:json)?\s*/i, "")
 		.replace(/\s*```$/i, "")
 		.trim();
-	const start = withoutFence.indexOf("[");
-	const end = withoutFence.lastIndexOf("]");
-	if (start < 0 || end <= start) throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
 
-	let questions;
 	try {
-		questions = JSON.parse(withoutFence.slice(start, end + 1));
-	} catch {
-		throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
+		return JSON.parse(withoutFence);
+	} catch {}
+
+	const candidates = [
+		[withoutFence.indexOf("{"), withoutFence.lastIndexOf("}")],
+		[withoutFence.indexOf("["), withoutFence.lastIndexOf("]")],
+	];
+	for (const [start, end] of candidates) {
+		if (start < 0 || end <= start) continue;
+		try {
+			return JSON.parse(withoutFence.slice(start, end + 1));
+		} catch {}
 	}
 
+	throw createInvalidStructuredResponseError("invalid_json");
+};
+
+export const parseGeneratedQuestions = (rawText, expectedCount) => {
+	const payload = parseStructuredPayload(rawText);
+	const questions = Array.isArray(payload) ? payload : payload?.questions;
+
 	if (!Array.isArray(questions) || questions.length !== expectedCount) {
-		throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
+		throw createInvalidStructuredResponseError("unexpected_question_count");
 	}
 
 	return questions.map((question) => {
@@ -174,7 +196,7 @@ const parseGeneratedQuestions = (rawText, expectedCount) => {
 			question.answers.length < 2 ||
 			question.answers.length > 6
 		) {
-			throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
+			throw createInvalidStructuredResponseError("invalid_question_shape");
 		}
 
 		const answers = question.answers.map((answer) => {
@@ -184,7 +206,7 @@ const parseGeneratedQuestions = (rawText, expectedCount) => {
 				!answer.content.trim() ||
 				typeof answer.is_correct !== "boolean"
 			) {
-				throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
+				throw createInvalidStructuredResponseError("invalid_answer_shape");
 			}
 			return { content: answer.content.trim(), is_correct: answer.is_correct };
 		});
@@ -194,7 +216,7 @@ const parseGeneratedQuestions = (rawText, expectedCount) => {
 			(question.question_type === "single_choice" && correctCount !== 1) ||
 			(question.question_type === "multiple_choice" && correctCount < 1)
 		) {
-			throw new Error("AI_INVALID_STRUCTURED_RESPONSE");
+			throw createInvalidStructuredResponseError("invalid_correct_answer_count");
 		}
 
 		return {
@@ -464,24 +486,66 @@ export const generateQuizWithAI = async ({ lessonId, numberOfQuestions, difficul
 	const lessonKnowledge = buildLessonKnowledge(lesson, "", MAX_QUIZ_CONTEXT_CHARS);
 	if (!lessonKnowledge) throw new Error("LESSON_CONTENT_EMPTY");
 
-	const result = await invokeAI({
+	const buildQuizRequest = (retryInstruction = "") => ({
 		systemPrompt:
-			"Bạn tạo câu hỏi kiểm tra cho LearnSphere. Chỉ trả về một JSON array hợp lệ, không markdown, không giải thích. Mỗi phần tử phải có đúng cấu trúc: {\"content\": string, \"question_type\": \"single_choice\" hoặc \"multiple_choice\", \"answers\": [{\"content\": string, \"is_correct\": boolean}]}. Mỗi câu có 4 đáp án khác nhau; single_choice có đúng 1 đáp án đúng, multiple_choice có ít nhất 1 đáp án đúng. Chỉ dùng kiến thức trong bài học. " +
-			difficultyInstructions[difficulty],
+			"Bạn tạo câu hỏi kiểm tra cho LearnSphere. Chỉ trả về một JSON object hợp lệ theo đúng mẫu {\"questions\":[{\"content\":\"...\",\"question_type\":\"single_choice\",\"answers\":[{\"content\":\"...\",\"is_correct\":true}]}]}, không markdown, không giải thích. Mỗi câu có 4 đáp án khác nhau; single_choice có đúng 1 đáp án đúng, multiple_choice có ít nhất 1 đáp án đúng. is_correct phải là JSON boolean true/false, không phải chuỗi. Giữ câu hỏi và đáp án súc tích. Chỉ dùng kiến thức trong bài học. " +
+			difficultyInstructions[difficulty] +
+			retryInstruction,
 		messages: [
 			{
 				role: "user",
 				content: [
 					{
-						text: `Tạo đúng ${numberOfQuestions} câu hỏi ở mức độ ${difficulty.toUpperCase()} từ bài học sau. Bảo đảm toàn bộ câu hỏi bám sát mức độ đã yêu cầu.\n\nTiêu đề: ${lesson.title}\n\nNguồn học liệu:\n${lessonKnowledge}`,
+						text: `Tạo đúng ${numberOfQuestions} câu hỏi ở mức độ ${difficulty.toUpperCase()} từ bài học sau. Mảng questions phải có chính xác ${numberOfQuestions} phần tử. Bảo đảm toàn bộ câu hỏi bám sát mức độ đã yêu cầu.\n\nTiêu đề: ${lesson.title}\n\nNguồn học liệu:\n${lessonKnowledge}`,
 					},
 				],
 			},
 		],
-		maxTokens: Math.min(4000, 500 + numberOfQuestions * 250),
+		maxTokens: Math.min(7000, 1000 + numberOfQuestions * 450),
 		temperature: 0.2,
+		responseFormat: { type: "json_object" },
 	});
-	const questions = parseGeneratedQuestions(result.text, numberOfQuestions);
 
-	return { lesson_id: lesson._id, difficulty, questions, model_id: result.model_id, usage: result.usage };
+	let result = await invokeAI(buildQuizRequest());
+	let questions;
+	let firstUsage = null;
+	try {
+		questions = parseGeneratedQuestions(result.text, numberOfQuestions);
+	} catch (error) {
+		if (error.message !== "AI_INVALID_STRUCTURED_RESPONSE") throw error;
+		firstUsage = result.usage;
+		console.warn("[AI] Invalid quiz structure; retrying once", {
+			reason: error.structured_reason,
+			model_id: result.model_id,
+			stop_reason: result.stop_reason,
+			response_chars: result.text.length,
+		});
+
+		result = await invokeAI(buildQuizRequest(
+			" Đây là lần thử lại sau khi cấu trúc trước không hợp lệ; hãy tuân thủ tuyệt đối mẫu JSON và số lượng câu hỏi.",
+		));
+		try {
+			questions = parseGeneratedQuestions(result.text, numberOfQuestions);
+		} catch (retryError) {
+			if (retryError.message === "AI_INVALID_STRUCTURED_RESPONSE") {
+				retryError.structured_details = {
+					reason: retryError.structured_reason,
+					model_id: result.model_id,
+					stop_reason: result.stop_reason,
+					response_chars: result.text.length,
+				};
+			}
+			throw retryError;
+		}
+	}
+
+	const usage = firstUsage && result.usage
+		? {
+			input_tokens: (firstUsage.input_tokens ?? 0) + (result.usage.input_tokens ?? 0),
+			output_tokens: (firstUsage.output_tokens ?? 0) + (result.usage.output_tokens ?? 0),
+			total_tokens: (firstUsage.total_tokens ?? 0) + (result.usage.total_tokens ?? 0),
+		}
+		: result.usage;
+
+	return { lesson_id: lesson._id, difficulty, questions, model_id: result.model_id, usage };
 };

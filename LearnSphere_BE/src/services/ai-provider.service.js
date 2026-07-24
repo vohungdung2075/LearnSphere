@@ -107,7 +107,7 @@ const mapGroqError = (status, body, cause) => {
 	return createAIError("AI_SERVICE_UNAVAILABLE", providerError);
 };
 
-const invokeGroq = async ({ systemPrompt, messages, maxTokens, temperature }) => {
+const invokeGroq = async ({ systemPrompt, messages, maxTokens, temperature, responseFormat }) => {
 	const { apiKey, modelId, baseUrl } = getGroqConfig();
 	const requestMessages = [
 		{ role: "system", content: systemPrompt },
@@ -128,6 +128,7 @@ const invokeGroq = async ({ systemPrompt, messages, maxTokens, temperature }) =>
 				max_tokens: maxTokens,
 				temperature,
 				top_p: 0.9,
+				...(responseFormat ? { response_format: responseFormat } : {}),
 			}),
 			signal: AbortSignal.timeout(getProviderTimeoutMs()),
 		});

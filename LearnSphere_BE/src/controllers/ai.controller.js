@@ -48,6 +48,8 @@ const sendAIError = (res, error, operation) => {
 				provider_error: error.cause?.message,
 				provider_cause: error.cause?.cause?.code || error.cause?.cause?.name,
 				fallback_error: error.fallback_error,
+				structured_reason: error.structured_reason,
+				structured_details: error.structured_details,
 			});
 		}
 		return res.status(mapped[0]).json({ message: mapped[1], code: error.message });

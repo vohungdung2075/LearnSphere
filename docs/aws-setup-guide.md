@@ -38,15 +38,18 @@ Thực hiện đúng thứ tự từ Bước 1 đến Bước 9.
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": {
-        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-      },
-      "StringLike": {
-        "token.actions.githubusercontent.com:sub": "repo:vohungdung2075/LearnSphere:ref:refs/heads/main"
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:vohungdung2075@206133613/LearnSphere@1307532910:ref:refs/heads/main"
       }
     }
   }]
 }
 ```
+
+Repository này được tạo sau ngày GitHub chuyển repository mới sang immutable OIDC
+subject, nên `sub` phải có cả owner ID và repository ID như trên. Nếu dùng
+repository khác, lấy claim thực tế bằng OIDC debugger của GitHub thay vì sao chép
+hai ID này.
 
 3. Gắn policy tối thiểu cho đúng ECR repository, bucket frontend và CloudFront distribution đang dùng:
    - ECR: lấy authorization token, upload layer và push image.
