@@ -125,6 +125,7 @@ export function ProfilePage() {
       if (avatarFile) {
         const presigned = await api.createProfileAvatarUpload(avatarFile);
         await api.uploadFileToS3(presigned.upload_url, avatarFile);
+        await api.confirmUpload(presigned.upload_session_id);
         avatarKey = presigned.file_key;
       }
 

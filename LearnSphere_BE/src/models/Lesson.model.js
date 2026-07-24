@@ -41,6 +41,15 @@ const LessonSchema = new mongoose.Schema(
 			type: Date,
 			default: null,
 		},
+		ai_index_started_at: {
+			type: Date,
+			default: null,
+		},
+		ai_index_run_id: {
+			type: String,
+			default: "",
+			select: false,
+		},
 		ai_index_error: {
 			type: String,
 			default: "",

@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
 import CourseDiscussion from "../models/CourseDiscussion.model.js";
 import Enrollment from "../models/Enrollment.model.js";
-import { createNotification } from "./notification.service.js";
+import { createNotificationBestEffort } from "./notification.service.js";
 
 const verifyDiscussionAccess = async (courseId, userId, userRole) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
@@ -56,14 +56,14 @@ export const createCourseDiscussion = async (courseId, content, userId, userRole
 	await discussion.populate("author_id", "full_name role");
 
 	if (userRole === "student" && course.created_by.toString() !== userId.toString()) {
-		await createNotification({
+		await createNotificationBestEffort({
 			recipient_id: course.created_by,
 			type: "system",
 			title: "Có thảo luận mới trong khóa học",
 			message: `Một học viên vừa gửi câu hỏi trong khóa học "${course.title}".`,
 			link: `/lesson-detail?course_id=${course._id}`,
 			metadata: { action: "view_course_discussion", course_id: course._id, discussion_id: discussion._id },
-		});
+		}, `discussion:${discussion._id}:created`);
 	}
 
 	return discussion;
@@ -93,25 +93,25 @@ export const createCourseDiscussionReply = async (courseId, discussionId, conten
 	const latestReply = discussion.replies[discussion.replies.length - 1];
 	const questionAuthorId = discussion.author_id?._id ?? discussion.author_id;
 	if (questionAuthorId && questionAuthorId.toString() !== userId.toString()) {
-		await createNotification({
+		await createNotificationBestEffort({
 			recipient_id: questionAuthorId,
 			type: "system",
 			title: "Có câu trả lời mới",
 			message: `Câu hỏi của bạn trong khóa học "${course.title}" vừa có phản hồi mới.`,
 			link: `/lesson-detail?course_id=${course._id}`,
 			metadata: { action: "view_course_discussion_reply", course_id: course._id, discussion_id: discussion._id, reply_id: latestReply._id },
-		});
+		}, `discussion:${discussion._id}:reply-author`);
 	}
 
 	if (userRole === "student" && course.created_by.toString() !== userId.toString() && course.created_by.toString() !== questionAuthorId?.toString()) {
-		await createNotification({
+		await createNotificationBestEffort({
 			recipient_id: course.created_by,
 			type: "system",
 			title: "Có phản hồi mới trong thảo luận",
 			message: `Một học viên vừa phản hồi thảo luận trong khóa học "${course.title}".`,
 			link: `/lesson-detail?course_id=${course._id}`,
 			metadata: { action: "view_course_discussion_reply", course_id: course._id, discussion_id: discussion._id, reply_id: latestReply._id },
-		});
+		}, `discussion:${discussion._id}:reply-tutor`);
 	}
 
 	return discussion;

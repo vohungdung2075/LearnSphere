@@ -897,7 +897,7 @@ Response:
 
 ### 3.7. Xóa bài học
 
-Dành cho tutor sở hữu course hoặc admin. Lesson bị xóa cứng, tất cả progress liên quan bị xóa, đồng thời `video_key` và `document_key` tương ứng được xóa khỏi S3. Backend chỉ xóa dữ liệu MongoDB sau khi S3 xóa thành công; nếu S3 lỗi, API trả `502` và lesson vẫn được giữ để có thể thử lại.
+Dành cho tutor sở hữu course. Lesson và progress liên quan được xóa nguyên khối trong MongoDB transaction, đồng thời một `S3CleanupTask` được tạo trong cùng transaction. Sau khi commit, backend thử xóa `video_key` và `document_key`; nếu S3 tạm lỗi, dữ liệu chính vẫn được xóa an toàn và task sẽ tự retry.
 
 ```http
 DELETE /api/lessons/{lesson_id}
@@ -909,13 +909,14 @@ Response:
 ```json
 {
 	"message": "Lesson and S3 files deleted successfully",
-	"deleted_s3_objects": 2
+	"deleted_s3_objects": 2,
+	"s3_cleanup_pending": false
 }
 ```
 
 ### 3.8. Phân tích document bài học cho AI
 
-Dành cho tutor sở hữu course hoặc admin. Endpoint tải PDF/DOCX từ S3 để trích xuất văn bản. Kết quả được lưu trong Lesson và được tái sử dụng cho chat, tóm tắt và sinh quiz; học sinh không cần xử lý lại document ở mỗi câu hỏi. Video bài học chỉ dùng để phát, không được gửi tới AI và không được nhận dạng lời thoại.
+Dành cho tutor sở hữu course. Endpoint tải PDF/DOCX từ S3 để trích xuất văn bản. Kết quả được lưu trong Lesson và được tái sử dụng cho chat, tóm tắt và sinh quiz; học sinh không cần xử lý lại document ở mỗi câu hỏi. Video bài học chỉ dùng để phát, không được gửi tới AI và không được nhận dạng lời thoại.
 
 ```http
 POST /api/lessons/{lesson_id}/ai-index
@@ -935,7 +936,7 @@ Response:
 }
 ```
 
-`status` có thể là `ready` hoặc `failed`. Khi thay `document_key`, chỉ mục cũ tự động bị xóa và trạng thái trở về `not_indexed`; thay video không ảnh hưởng chỉ mục AI. Với PDF scan không có lớp chữ, backend tự render tối đa `AI_PDF_OCR_MAX_PAGES` trang và dùng Tesseract.js với dữ liệu tiếng Việt để OCR cục bộ, không tiêu quota AI provider.
+`status` có thể là `ready` hoặc `failed`. Khi thay `document_key`, chỉ mục cũ tự động bị xóa và trạng thái trở về `not_indexed`; thay video không ảnh hưởng chỉ mục AI. Với PDF scan không có lớp chữ, backend render và OCR tuần tự tối đa `AI_PDF_OCR_MAX_PAGES` trang bằng Tesseract.js, không tiêu quota AI provider. Mỗi lượt có `run_id`, timeout và thời điểm bắt đầu; job bị gián đoạn quá `AI_INDEX_STALE_MS` có thể chạy lại mà kết quả cũ không ghi đè document mới.
 
 ### Error response thường gặp
 
@@ -1620,7 +1621,11 @@ GROQ_API_KEY=gsk_xxxxxxxxx
 GROQ_MODEL=llama-3.3-70b-versatile
 AI_DOCUMENT_MAX_BYTES=20971520
 AI_INDEX_MAX_CHARS=200000
-AI_PDF_OCR_MAX_PAGES=20
+AI_INDEX_STALE_MS=600000
+AI_PDF_OCR_MAX_PAGES=12
+AI_PDF_OCR_IMAGE_WIDTH=1400
+AI_PDF_OCR_TIMEOUT_MS=120000
+AI_PDF_OCR_MAX_CONCURRENT=1
 AI_PDF_OCR_MIN_TEXT_CHARS=200
 AI_RATE_LIMIT_REQUESTS=10
 AI_RATE_LIMIT_WINDOW_MS=60000
@@ -1675,6 +1680,7 @@ Response:
 
 ```json
 {
+	"upload_session_id": "6881f8c90db5248718eb6e99",
 	"upload_url": "https://bucket.s3.amazonaws.com/...presigned...",
 	"file_key": "courses/6870f8c90db5248718eb6e31/lessons/videos/uuid-lesson-01.mp4",
 	"content_type": "video/mp4",
@@ -1684,7 +1690,7 @@ Response:
 }
 ```
 
-Frontend dùng `PUT <upload_url>` với body là file binary và header `Content-Type` giống request presign. Request PUT trực tiếp đến S3 không gửi JWT. Sau khi upload thành công, frontend lưu `file_key` bằng API update course hoặc create/update lesson.
+Frontend dùng `PUT <upload_url>` với body là file binary và header `Content-Type` giống request presign. Request PUT trực tiếp đến S3 không gửi JWT. Sau khi PUT thành công, frontend gọi `POST /api/files/uploads/{upload_session_id}/confirm`, rồi lưu `file_key` bằng API update course hoặc create/update lesson.
 
 Folder, định dạng và giới hạn:
 
@@ -1695,6 +1701,40 @@ Folder, định dạng và giới hạn:
 | `lessons/documents` | `.pdf`, `.docx` | 20 MB |
 
 Backend kiểm tra đuôi file khớp `content_type` và kiểm tra `file_size` trước khi ký URL. Khi key được gắn vào Course/Lesson, backend dùng S3 `HeadObject` để xác nhận object tồn tại, đúng Content-Type và kích thước thực tế không vượt giới hạn.
+
+### 6.1.1. Multipart upload cho video lớn
+
+Frontend dùng multipart cho video từ 25 MB. Bắt đầu:
+
+```http
+POST /api/files/multipart/start
+Authorization: Bearer <tutor_access_token>
+Content-Type: application/json
+```
+
+Body giống endpoint presigned upload và `folder` bắt buộc là `lessons/videos`. Response chứa `upload_session_id`, `part_size` và danh sách presigned URL của từng part. Frontend upload tối đa 3 part song song, retry từng part tối đa 3 lần và thu thập header `ETag`.
+
+Hoàn tất:
+
+```http
+POST /api/files/multipart/{upload_session_id}/complete
+Authorization: Bearer <tutor_access_token>
+
+{
+	"parts": [
+		{ "part_number": 1, "etag": "\"etag-value\"" }
+	]
+}
+```
+
+Hủy upload:
+
+```http
+DELETE /api/files/uploads/{upload_session_id}
+Authorization: Bearer <access_token>
+```
+
+Mọi upload tạo một `UploadSession`. Session được xóa khi file đã gắn thành công vào Course, Lesson hoặc User. Session chưa được gắn sau `UPLOAD_SESSION_TTL_HOURS` sẽ được scheduler đối chiếu reference rồi abort multipart/xóa object S3. Việc đối chiếu reference giúp file đang dùng không bị xóa nếu thao tác đánh dấu session gặp lỗi tạm thời.
 
 ### 6.2. Lấy URL thumbnail khóa học
 

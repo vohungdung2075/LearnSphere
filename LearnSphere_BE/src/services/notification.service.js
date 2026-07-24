@@ -30,6 +30,15 @@ export const createNotification = async ({ recipient_id, type = "system", title,
 	});
 };
 
+export const createNotificationBestEffort = async (payload, context = "unspecified") => {
+	try {
+		return await createNotification(payload);
+	} catch (error) {
+		console.error(`Notification delivery failed (${context}); primary operation remains successful:`, error.message);
+		return null;
+	}
+};
+
 export const getMyNotifications = async (userId, { limit = 20 } = {}) => {
 	const selectedLimit = Math.min(Math.max(Number(limit) || 20, 1), MAX_LIMIT);
 

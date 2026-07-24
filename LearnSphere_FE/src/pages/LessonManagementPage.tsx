@@ -118,8 +118,25 @@ export function LessonManagementPage() {
 
     setIsUploading(true);
     setMessage(`Đang tải file "${file.name}" lên S3...`);
+    let uploadSessionId = '';
 
     try {
+      if (folder === 'lessons/videos' && file.size >= 25 * 1024 * 1024) {
+        const multipart = await api.createMultipartUpload({
+          course_id: selectedCourseId,
+          file_name: file.name,
+          content_type: file.type,
+          file_size: file.size,
+          folder,
+        });
+        uploadSessionId = multipart.upload_session_id;
+        const key = await api.uploadMultipartFileToS3(multipart, file, (percent) => {
+          setMessage(`Đang tải video "${file.name}" theo từng phần... ${percent}%`);
+        });
+        setMessage(`Upload video "${file.name}" thành công!`);
+        return key;
+      }
+
       const presigned = await api.createPresignedUpload({
         course_id: selectedCourseId,
         file_name: file.name,
@@ -127,13 +144,16 @@ export function LessonManagementPage() {
         file_size: file.size,
         folder,
       });
+      uploadSessionId = presigned.upload_session_id;
 
       await api.uploadFileToS3(presigned.upload_url, file, (percent) => {
         setMessage(`Đang tải file "${file.name}" lên S3... ${percent}%`);
       });
+      await api.confirmUpload(presigned.upload_session_id);
       setMessage(`Upload file "${file.name}" thành công!`);
       return presigned.file_key;
     } catch (err) {
+      if (uploadSessionId) await api.abortUpload(uploadSessionId).catch(() => {});
       setMessage(err instanceof Error ? err.message : 'Upload file thất bại');
       return null;
     } finally {
@@ -912,6 +932,7 @@ export function LessonManagementPage() {
                               type="file"
                               accept="video/mp4,video/webm"
                               className="hidden"
+                              disabled={isUploading}
                               onChange={async (event) => {
                                 const file = event.target.files?.[0];
                                 if (file) {
@@ -934,6 +955,7 @@ export function LessonManagementPage() {
                               type="file"
                               accept="application/pdf,.docx"
                               className="hidden"
+                              disabled={isUploading}
                               onChange={async (event) => {
                                 const file = event.target.files?.[0];
                                 if (file) {

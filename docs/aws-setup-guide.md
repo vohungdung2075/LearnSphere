@@ -42,7 +42,7 @@ Thực hiện đúng thứ tự từ Bước 1 đến Bước 7.
    - Tên role: `learnsphere-ec2-role`
 
 2. Gắn các policy:
-   - `AmazonS3FullAccess` (hoặc chỉ bucket cụ thể)
+   - Quyền S3 giới hạn theo bucket: `ListBucket`, `PutObject`, `GetObject`, `DeleteObject` và `AbortMultipartUpload`
    - `AmazonEC2ContainerRegistryReadOnly` — để pull image từ ECR
    - `CloudWatchAgentServerPolicy` — để đẩy logs lên CloudWatch
 
@@ -72,6 +72,8 @@ Vào **S3 → Bucket → Permissions → CORS** và dán cấu hình:
 ```
 
 > Thay `CLOUDFRONT_DOMAIN` bằng domain CloudFront thật sau khi tạo ở Bước 6.
+>
+> `ExposeHeaders: ["ETag"]` là bắt buộc để trình duyệt hoàn tất multipart upload.
 
 ### 3b. Bucket Frontend Static Hosting (tạo mới)
 

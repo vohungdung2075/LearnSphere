@@ -2,7 +2,8 @@ import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
-import { validateStoredFileKey } from "./file.service.js";
+import { deleteS3ObjectsBestEffort, validateStoredFileKey } from "./file.service.js";
+import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
 
 export const createCourse = async ( { title, description, enrollment_type }, creatorId ) => {
 	const allowedEnrollmentTypes = ["open", "approval_required"];
@@ -76,6 +77,7 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
     }
 	
 	let normalizedThumbnailKey;
+	const previousThumbnailKey = course.thumbnail_key;
 	if (thumbnail_key !== undefined) {
 		normalizedThumbnailKey = thumbnail_key.trim();
 		if (normalizedThumbnailKey) {
@@ -93,7 +95,31 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
 	if (thumbnail_key !== undefined) course.thumbnail_key = normalizedThumbnailKey;
 	if (enrollment_type) course.enrollment_type = enrollment_type;
 
-	const updatedCourse = await course.save();
+	let updatedCourse;
+	try {
+		updatedCourse = await course.save();
+	} catch (error) {
+		if (thumbnail_key !== undefined && normalizedThumbnailKey && normalizedThumbnailKey !== previousThumbnailKey) {
+			await deleteS3ObjectsBestEffort(
+				[normalizedThumbnailKey],
+				`course:${course._id}:thumbnail:database-update-failed`,
+			);
+		}
+		throw error;
+	}
+
+	if (thumbnail_key !== undefined && normalizedThumbnailKey) {
+		await markUploadAttachedBestEffort(
+			[normalizedThumbnailKey],
+			`course:${course._id}:thumbnail:attached`,
+		);
+	}
+	if (thumbnail_key !== undefined && previousThumbnailKey && previousThumbnailKey !== normalizedThumbnailKey) {
+		await deleteS3ObjectsBestEffort(
+			[previousThumbnailKey],
+			`course:${course._id}:thumbnail:replaced`,
+		);
+	}
 	return updatedCourse;
 };
 

@@ -133,6 +133,7 @@ export function CourseCatalogPage() {
       folder: 'thumbnails',
     });
     await api.uploadFileToS3(presigned.upload_url, file);
+    await api.confirmUpload(presigned.upload_session_id);
     await api.updateCourse(courseId, { thumbnail_key: presigned.file_key });
   }
 

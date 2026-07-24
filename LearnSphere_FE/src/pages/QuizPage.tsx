@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
@@ -66,6 +66,8 @@ export function QuizPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [quizStatusFilter, setQuizStatusFilter] = useState<QuizStatusFilter>('all');
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>('all');
+  const selectedAnswersRef = useRef<Record<string, string[]>>({});
+  const autoSubmitTriggeredRef = useRef(false);
 
   const [hasStarted, setHasStarted] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -164,6 +166,8 @@ export function QuizPage() {
     setHasStarted(false);
     setQuestions([]);
     setSelectedAnswers({});
+    selectedAnswersRef.current = {};
+    autoSubmitTriggeredRef.current = false;
     setAttemptId('');
     setExpiresAt('');
     setTimeLeft(0);
@@ -203,10 +207,11 @@ export function QuizPage() {
       const attempt = await api.startQuiz(quizIdToStart);
       setAttemptId(attempt.attempt_id);
       setExpiresAt(attempt.expires_at);
-      const remainingSeconds = Math.max(0, Math.floor((new Date(attempt.expires_at).getTime() - Date.now()) / 1000));
+      const remainingSeconds = Math.max(0, Math.ceil((new Date(attempt.expires_at).getTime() - Date.now()) / 1000));
       setTimeLeft(remainingSeconds);
       setQuestions(attempt.questions);
       setHasStarted(true);
+      autoSubmitTriggeredRef.current = false;
       await refreshQuizAttempts(quizzes);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Không thể khởi tạo bài kiểm tra';
@@ -222,17 +227,20 @@ export function QuizPage() {
     }
   }
 
-  // Countdown Timer & Auto-submit
+  // Countdown Timer & Auto-submit. Submit slightly before the server deadline
+  // and read answers from a ref so the interval never submits a stale snapshot.
   useEffect(() => {
     if (!expiresAt || submittedResult) return;
 
     const timer = window.setInterval(() => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      const remainingMs = new Date(expiresAt).getTime() - Date.now();
+      const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
       setTimeLeft(remaining);
 
-      if (remaining === 0 && !isSubmitting && !submittedResult) {
+      if (remainingMs <= 1_000 && !autoSubmitTriggeredRef.current) {
+        autoSubmitTriggeredRef.current = true;
         window.clearInterval(timer);
-        setMessage('Thời gian làm bài đã hết! Hệ thống đang tự động nộp bài...');
+        setMessage('Thời gian sắp hết! Hệ thống đang tự động nộp bài...');
         void handleDoSubmit();
       }
     }, 1000);
@@ -289,16 +297,19 @@ export function QuizPage() {
 
     setSelectedAnswers((current) => {
       const existing = current[question._id] ?? [];
+      let nextAnswers: Record<string, string[]>;
       if (question.question_type === 'single_choice') {
-        return { ...current, [question._id]: [answerId] };
+        nextAnswers = { ...current, [question._id]: [answerId] };
+      } else {
+        nextAnswers = {
+          ...current,
+          [question._id]: existing.includes(answerId)
+            ? existing.filter((id) => id !== answerId)
+            : [...existing, answerId],
+        };
       }
-
-      return {
-        ...current,
-        [question._id]: existing.includes(answerId)
-          ? existing.filter((id) => id !== answerId)
-          : [...existing, answerId],
-      };
+      selectedAnswersRef.current = nextAnswers;
+      return nextAnswers;
     });
   }
 
@@ -308,7 +319,7 @@ export function QuizPage() {
     setIsSubmitting(true);
     setMessage('');
 
-    const formattedAnswers = Object.entries(selectedAnswers).map(([questionId, selectedIds]) => ({
+    const formattedAnswers = Object.entries(selectedAnswersRef.current).map(([questionId, selectedIds]) => ({
       question_id: questionId,
       selected_answer_ids: selectedIds,
     }));
@@ -649,6 +660,8 @@ export function QuizPage() {
                   setHasStarted(false);
                   setQuestions([]);
                   setSelectedAnswers({});
+                  selectedAnswersRef.current = {};
+                  autoSubmitTriggeredRef.current = false;
                   setAttemptId('');
                   setExpiresAt('');
                   setTimeLeft(0);

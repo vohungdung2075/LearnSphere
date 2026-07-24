@@ -367,10 +367,13 @@ export function LessonDetailPage() {
       } : item));
       setMessage(result.document_indexed ? 'AI đã phân tích document của bài học.' : 'AI chưa đọc được nội dung document. Hãy kiểm tra lại file.');
     } catch (error) {
-      setLesson((current) => current ? {
-        ...current,
-        ai_index_status: current.ai_index_status === 'processing' ? 'failed' : current.ai_index_status,
-      } : current);
+      try {
+        const latestLesson = await api.getLesson(lesson._id);
+        setLesson(latestLesson);
+        setLessons((current) => current.map((item) => item._id === latestLesson._id ? latestLesson : item));
+      } catch {
+        // Keep the last known state when the server itself is unavailable.
+      }
       setMessage(getAIErrorMessage(error, 'Không thể phân tích document cho AI.'));
     } finally {
       setIsIndexingAI(false);
@@ -877,7 +880,7 @@ export function LessonDetailPage() {
                     <button
                       className="group flex w-full items-center gap-3 rounded-xl border border-[#adc7ff]/45 bg-[#adc7ff]/10 px-4 py-4 text-left shadow-lg shadow-[#adc7ff]/5 transition hover:-translate-y-0.5 hover:bg-[#adc7ff]/18 hover:shadow-[#adc7ff]/15 disabled:cursor-not-allowed disabled:border-[#414754] disabled:bg-[#0d131f] disabled:opacity-60"
                       type="button"
-                      disabled={!lesson?.document_key || isIndexingAI || lesson?.ai_index_status === 'processing'}
+                      disabled={!lesson?.document_key || isIndexingAI}
                       onClick={() => void handleIndexLessonForAI()}
                     >
                       <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#adc7ff] text-[#002e68]">
@@ -893,7 +896,7 @@ export function LessonDetailPage() {
                             : lesson?.ai_index_status === 'partial'
                               ? 'AI đã đọc một phần document; có thể chạy lại nếu cần'
                               : lesson?.ai_index_status === 'processing' || isIndexingAI
-                                ? 'AI đang đọc nội dung document'
+                                ? 'AI đang đọc document; có thể bấm lại để kiểm tra nếu xử lý bị gián đoạn'
                                 : lesson?.document_key
                                   ? 'Chuẩn bị dữ liệu để AI dùng trong bài học này'
                                   : 'Cần có document trước khi phân tích'}

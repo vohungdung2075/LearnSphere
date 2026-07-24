@@ -7,7 +7,7 @@ import Lesson from "../models/Lesson.model.js";
 import LessonProgress from "../models/LessonProgress.model.js";
 import Quiz from "../models/Quiz.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
-import { deleteCourseS3Prefix } from "./file.service.js";
+import { processPendingS3CleanupTasks, processS3CleanupTask, queueCoursePrefixCleanup } from "./s3-cleanup-task.service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let cleanupRunning = false;
@@ -20,30 +20,44 @@ const readNonNegativeInteger = (value, fallback) => {
 const purgeCourse = async (course) => {
 	if (!course.is_deleted) throw new Error("COURSE_MUST_BE_DELETED_FIRST");
 
-	const s3Result = await deleteCourseS3Prefix(course._id);
-	const [enrollments, lessons, lessonProgress, quizzes, attempts, discussions, aiMessages] = await Promise.all([
-		Enrollment.deleteMany({ course_id: course._id }),
-		Lesson.deleteMany({ course_id: course._id }),
-		LessonProgress.deleteMany({ course_id: course._id }),
-		Quiz.deleteMany({ course_id: course._id }),
-		QuizAttempt.deleteMany({ course_id: course._id }),
-		CourseDiscussion.deleteMany({ course_id: course._id }),
-		AIMessage.deleteMany({ course_id: course._id }),
-	]);
+	const session = await mongoose.startSession();
+	let cleanupTask;
+	let deletedRecords;
+	try {
+		await session.withTransaction(async () => {
+			const courseToDelete = await Course.findOne({ _id: course._id, is_deleted: true }).session(session);
+			if (!courseToDelete) throw new Error("DELETED_COURSE_NOT_FOUND");
 
-	await course.deleteOne();
+			cleanupTask = await queueCoursePrefixCleanup(courseToDelete._id, session);
+			// MongoDB does not support parallel operations inside one transaction.
+			const enrollments = await Enrollment.deleteMany({ course_id: courseToDelete._id }, { session });
+			const lessons = await Lesson.deleteMany({ course_id: courseToDelete._id }, { session });
+			const lessonProgress = await LessonProgress.deleteMany({ course_id: courseToDelete._id }, { session });
+			const quizzes = await Quiz.deleteMany({ course_id: courseToDelete._id }, { session });
+			const attempts = await QuizAttempt.deleteMany({ course_id: courseToDelete._id }, { session });
+			const discussions = await CourseDiscussion.deleteMany({ course_id: courseToDelete._id }, { session });
+			const aiMessages = await AIMessage.deleteMany({ course_id: courseToDelete._id }, { session });
+			await Course.deleteOne({ _id: courseToDelete._id }, { session });
+			deletedRecords = {
+				enrollments: enrollments.deletedCount,
+				lessons: lessons.deletedCount,
+				lesson_progress: lessonProgress.deletedCount,
+				quizzes: quizzes.deletedCount,
+				quiz_attempts: attempts.deletedCount,
+				discussions: discussions.deletedCount,
+				ai_messages: aiMessages.deletedCount,
+			};
+		});
+	} finally {
+		await session.endSession();
+	}
+
+	const s3Result = await processS3CleanupTask(cleanupTask._id);
 	return {
 		course_id: course._id,
 		deleted_s3_objects: s3Result.deleted_count,
-		deleted_records: {
-			enrollments: enrollments.deletedCount,
-			lessons: lessons.deletedCount,
-			lesson_progress: lessonProgress.deletedCount,
-			quizzes: quizzes.deletedCount,
-			quiz_attempts: attempts.deletedCount,
-			discussions: discussions.deletedCount,
-			ai_messages: aiMessages.deletedCount,
-		},
+		s3_cleanup_pending: s3Result.pending,
+		deleted_records: deletedRecords,
 	};
 };
 
@@ -90,15 +104,27 @@ export const purgeExpiredDeletedCourses = async () => {
 };
 
 export const startCourseCleanupScheduler = () => {
-	if (process.env.COURSE_CLEANUP_ENABLED?.toLowerCase() !== "true") return null;
-	const intervalMinutes = Math.max(
+	const courseCleanupEnabled = process.env.COURSE_CLEANUP_ENABLED?.toLowerCase() === "true";
+	const courseIntervalMinutes = Math.max(
 		5,
 		readNonNegativeInteger(process.env.COURSE_CLEANUP_INTERVAL_MINUTES, 360),
 	);
+	const fileIntervalMinutes = Math.max(
+		1,
+		readNonNegativeInteger(process.env.S3_CLEANUP_INTERVAL_MINUTES, 5),
+	);
+	const intervalMinutes = courseCleanupEnabled
+		? Math.min(courseIntervalMinutes, fileIntervalMinutes)
+		: fileIntervalMinutes;
 
-	void purgeExpiredDeletedCourses();
+	const runCleanupCycle = async () => {
+		await processPendingS3CleanupTasks();
+		if (courseCleanupEnabled) await purgeExpiredDeletedCourses();
+	};
+
+	void runCleanupCycle().catch((error) => console.error("Cleanup scheduler failed:", error.message));
 	const timer = setInterval(() => {
-		void purgeExpiredDeletedCourses();
+		void runCleanupCycle().catch((error) => console.error("Cleanup scheduler failed:", error.message));
 	}, intervalMinutes * 60 * 1000);
 	timer.unref();
 	return timer;

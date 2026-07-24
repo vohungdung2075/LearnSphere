@@ -46,6 +46,7 @@ export type Lesson = {
   order_index: number;
   ai_index_status?: 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
   ai_indexed_at?: string | null;
+  ai_index_started_at?: string | null;
   ai_index_error?: string;
 };
 
@@ -166,12 +167,24 @@ export type PresignedDownload = {
 };
 
 export type PresignedUpload = {
+  upload_session_id: string;
   upload_url: string;
   file_key: string;
   content_type: string;
   file_size: number;
   max_size_bytes: number;
   expires_in: number;
+};
+
+export type MultipartUpload = {
+  upload_session_id: string;
+  file_key: string;
+  content_type: string;
+  file_size: number;
+  part_size: number;
+  part_count: number;
+  expires_in: number;
+  parts: Array<{ part_number: number; upload_url: string }>;
 };
 
 export type QuizAttemptResult = {
@@ -318,6 +331,7 @@ export function getAIErrorMessage(error: unknown, fallback: string) {
   if (error.code === 'AI_DOCUMENT_NOT_INDEXED') return 'Backend không OCR được document của bài học. Hãy xem trạng thái học liệu và kiểm tra PDF có bị lỗi hoặc đặt mật khẩu hay không.';
   if (error.code === 'AI_SUMMARY_NOT_READY') return 'Giảng viên chưa tạo bản tóm tắt cho tài liệu này.';
   if (error.code === 'AI_INDEX_IN_PROGRESS') return 'AI đang xử lý file bài học. Vui lòng đợi hoàn tất rồi thử lại.';
+  if (error.code === 'AI_INDEX_SOURCE_CHANGED') return 'Document đã thay đổi trong lúc AI xử lý. Hãy chạy phân tích lại với file mới.';
   if (error.code === 'AI_FILES_NOT_INDEXED') return 'Giảng viên cần tóm tắt học liệu bằng AI ít nhất một lần trước khi học viên sử dụng.';
 	if (error.code === 'LESSON_DOCUMENT_REQUIRED') return 'Bài học cần có document để tạo bản tóm tắt.';
   if (error.code === 'AI_RATE_LIMITED') {
@@ -458,6 +472,7 @@ export const api = {
       message: string;
       course_id: string;
       deleted_s3_objects: number;
+      s3_cleanup_pending: boolean;
       deleted_records: Record<string, number>;
     }>(`/courses/${courseId}/permanent`, {
       method: 'DELETE',
@@ -533,7 +548,7 @@ export const api = {
   },
 
   deleteLesson(lessonId: string) {
-    return request<{ message: string }>(`/lessons/${lessonId}`, {
+    return request<{ message: string; deleted_s3_objects: number; s3_cleanup_pending: boolean }>(`/lessons/${lessonId}`, {
       method: 'DELETE',
     });
   },
@@ -682,6 +697,32 @@ export const api = {
     });
   },
 
+  confirmUpload(uploadSessionId: string) {
+    return request<{ upload_session_id: string; file_key: string; status: 'uploaded' }>(`/files/uploads/${uploadSessionId}/confirm`, {
+      method: 'POST',
+    });
+  },
+
+  abortUpload(uploadSessionId: string) {
+    return request<{ message: string }>(`/files/uploads/${uploadSessionId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  createMultipartUpload(body: { course_id: string; file_name: string; content_type: string; file_size: number; folder: 'lessons/videos' }) {
+    return request<MultipartUpload>('/files/multipart/start', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  completeMultipartUpload(uploadSessionId: string, parts: Array<{ part_number: number; etag: string }>) {
+    return request<{ upload_session_id: string; file_key: string; status: 'uploaded' }>(`/files/multipart/${uploadSessionId}/complete`, {
+      method: 'POST',
+      body: { parts },
+    });
+  },
+
   createPresignedDownload(lessonId: string, targetType: 'video' | 'document') {
     return request<PresignedDownload>(`/files/presigned-download?lesson_id=${lessonId}&target_type=${targetType}`);
   },
@@ -719,6 +760,91 @@ export const api = {
 
       xhr.send(file);
     });
+  },
+
+  async uploadMultipartFileToS3(
+    multipart: MultipartUpload,
+    file: File,
+    onProgress?: (percent: number) => void,
+  ) {
+    const uploadedByPart = new Array<number>(multipart.part_count).fill(0);
+    const completedParts = new Array<{ part_number: number; etag: string }>(multipart.part_count);
+    let nextPartIndex = 0;
+
+    const reportProgress = () => {
+      const uploaded = uploadedByPart.reduce((total, value) => total + value, 0);
+      onProgress?.(Math.min(100, Math.round((uploaded / file.size) * 100)));
+    };
+
+    const uploadPart = (partIndex: number) => {
+      const part = multipart.parts[partIndex];
+      const start = partIndex * multipart.part_size;
+      const end = Math.min(file.size, start + multipart.part_size);
+      const blob = file.slice(start, end);
+
+      return new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', part.upload_url);
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          uploadedByPart[partIndex] = event.loaded;
+          reportProgress();
+        };
+        xhr.onerror = () => reject(new Error(`Mất kết nối khi tải phần ${part.part_number}.`));
+        xhr.onload = () => {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(`Upload phần ${part.part_number} thất bại (${xhr.status}).`));
+            return;
+          }
+          const etag = xhr.getResponseHeader('ETag');
+          if (!etag) {
+            reject(new Error('S3 không trả về ETag. Hãy thêm ETag vào ExposeHeaders trong bucket CORS.'));
+            return;
+          }
+          uploadedByPart[partIndex] = blob.size;
+          reportProgress();
+          resolve(etag);
+        };
+        xhr.send(blob);
+      });
+    };
+
+    const uploadPartWithRetry = async (partIndex: number) => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await uploadPart(partIndex);
+        } catch (error) {
+          lastError = error;
+          uploadedByPart[partIndex] = 0;
+          reportProgress();
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(`Upload phần ${partIndex + 1} thất bại.`);
+    };
+
+    const worker = async () => {
+      while (true) {
+        const partIndex = nextPartIndex;
+        nextPartIndex += 1;
+        if (partIndex >= multipart.part_count) return;
+        const etag = await uploadPartWithRetry(partIndex);
+        completedParts[partIndex] = {
+          part_number: multipart.parts[partIndex].part_number,
+          etag,
+        };
+      }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, multipart.part_count) }, () => worker()));
+      await this.completeMultipartUpload(multipart.upload_session_id, completedParts);
+      onProgress?.(100);
+      return multipart.file_key;
+    } catch (error) {
+      await this.abortUpload(multipart.upload_session_id).catch(() => {});
+      throw error;
+    }
   },
 
   forgotPassword(email: string) {
