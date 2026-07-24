@@ -209,6 +209,67 @@ export type QuizAttemptResult = {
   }>;
 };
 
+export type StudentLearningReport = {
+  course: {
+    _id: string;
+    title: string;
+  };
+  student: {
+    _id: string;
+    full_name: string;
+    email: string;
+  };
+  enrollment: {
+    _id: string;
+    status: 'active';
+    requested_at?: string;
+    approved_at?: string | null;
+  };
+  lesson_progress: {
+    progress_percent: number;
+    completed_lessons: number;
+    total_lessons: number;
+    lessons: Array<{
+      lesson_id: string;
+      title: string;
+      order_index: number;
+      is_completed: boolean;
+      completed_at?: string | null;
+    }>;
+  };
+  quiz_progress: {
+    total_quizzes: number;
+    attempted_quizzes: number;
+    submitted_attempts: number;
+    average_score_percent: number;
+    best_score_percent: number;
+    attempts: Array<{
+      attempt_id: string;
+      quiz_id: string;
+      quiz_title: string;
+      difficulty?: QuizDifficulty | null;
+      status: 'in_progress' | 'submitted' | 'expired';
+      score: number;
+      total_score: number;
+      score_percent: number;
+      correct_answers: number;
+      total_questions: number;
+      started_at: string;
+      submitted_at?: string | null;
+      duration_seconds?: number | null;
+      answers: Array<{
+        question_id: string;
+        question_content: string;
+        selected_answers: Array<{ answer_id: string; content: string }>;
+        correct_answers: Array<{ answer_id: string; content: string }>;
+        is_correct: boolean;
+        earned_point: number;
+        max_point: number;
+      }>;
+    }>;
+  };
+};
+
 export type AdminUser = User & {
   _id: string;
   account_status: 'pending' | 'active' | 'blocked';
@@ -528,6 +589,10 @@ export const api = {
 
   getCourseEnrollments(courseId: string, status: 'pending' | 'active' = 'pending') {
     return request<Enrollment[]>(`/courses/${courseId}/enrollments?status=${status}`);
+  },
+
+  getStudentLearningReport(courseId: string, enrollmentId: string) {
+    return request<StudentLearningReport>(`/courses/${courseId}/enrollments/${enrollmentId}/learning-report`);
   },
 
   approveEnrollment(courseId: string, enrollmentId: string) {

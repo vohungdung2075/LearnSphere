@@ -1,4 +1,5 @@
 import { enrollCourse, unenrollCourse, getMyCourses, getCourseEnrollments, approveEnrollment, removeEnrollment } from "../services/enrollment.service.js";
+import { getStudentLearningReport } from "../services/student-learning-report.service.js";
 
 export const handleEnrollCourse = async (req, res) => {
 	const { course_id } = req.params ?? {};
@@ -68,6 +69,31 @@ export const handleGetCourseEnrollments = async (req, res) => {
 		if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "Forbidden - You do not have permission to view enrollments for this course" });
 
 		console.error("Get course enrollments error:", error);
+		return res.status(500).json({ message: "Internal server error" });
+	}
+};
+
+export const handleGetStudentLearningReport = async (req, res) => {
+	const { course_id, enrollment_id } = req.params ?? {};
+	try {
+		const report = await getStudentLearningReport(
+			course_id,
+			enrollment_id,
+			req.user._id,
+			req.user.role,
+		);
+		return res.status(200).json(report);
+	} catch (error) {
+		if (error.message === "INVALID_COURSE_ID" || error.message === "INVALID_ENROLLMENT_ID") {
+			return res.status(400).json({ message: "Invalid ID format" });
+		}
+		if (error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Course not found" });
+		if (error.message === "ENROLLMENT_NOT_FOUND") return res.status(404).json({ message: "Active student enrollment not found" });
+		if (error.message === "FORBIDDEN_COURSE_ACTION") {
+			return res.status(403).json({ message: "You do not have permission to view this student's learning report" });
+		}
+
+		console.error("Get student learning report error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
 };

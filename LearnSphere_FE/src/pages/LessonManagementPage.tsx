@@ -4,6 +4,7 @@ import { AppToast } from '../components/AppToast';
 import { CreateCourseModal } from '../components/CreateCourseModal';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
+import { StudentLearningReportModal } from '../components/StudentLearningReportModal';
 import { canManageContent, canModerateCourse, getCourseOwnerId, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
 import {
   api,
@@ -14,6 +15,7 @@ import {
   type EnrollmentType,
   type Lesson,
   type Quiz,
+  type StudentLearningReport,
 } from '../services/api';
 
 const avatarSrc =
@@ -92,6 +94,10 @@ export function LessonManagementPage() {
   const [activeEnrollments, setActiveEnrollments] = useState<Enrollment[]>([]);
   const [enrollmentView, setEnrollmentView] = useState<EnrollmentView>('active');
   const [removingEnrollmentId, setRemovingEnrollmentId] = useState('');
+  const [isStudentReportOpen, setIsStudentReportOpen] = useState(false);
+  const [isStudentReportLoading, setIsStudentReportLoading] = useState(false);
+  const [studentReport, setStudentReport] = useState<StudentLearningReport | null>(null);
+  const [studentReportError, setStudentReportError] = useState('');
   const [selectedQuizId, setSelectedQuizId] = useState('');
   const [courseForm, setCourseForm] = useState<CourseForm>(emptyCourseForm);
   const [lessonForm, setLessonForm] = useState<LessonForm>(emptyLessonForm);
@@ -262,6 +268,9 @@ export function LessonManagementPage() {
     setLessonForm({ ...emptyLessonForm, order_index: String(lessons.length + 1 || 1) });
     setEditingLessonId('');
     setIsLessonEditorOpen(false);
+    setIsStudentReportOpen(false);
+    setStudentReport(null);
+    setStudentReportError('');
     void loadCourseParts(selectedCourseId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCourseId]);
@@ -450,6 +459,28 @@ export function LessonManagementPage() {
     }
   }
 
+  async function openStudentLearningReport(enrollment: Enrollment) {
+    if (!selectedCourseId || enrollment.status !== 'active') return;
+
+    setIsStudentReportOpen(true);
+    setIsStudentReportLoading(true);
+    setStudentReport(null);
+    setStudentReportError('');
+    try {
+      const report = await api.getStudentLearningReport(selectedCourseId, enrollment._id);
+      setStudentReport(report);
+    } catch (err) {
+      setStudentReportError(err instanceof Error ? err.message : 'Không thể tải tiến độ học tập của học viên');
+    } finally {
+      setIsStudentReportLoading(false);
+    }
+  }
+
+  function closeStudentLearningReport() {
+    setIsStudentReportOpen(false);
+    setStudentReportError('');
+  }
+
   if (!canManageContent(user)) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[#0d131f] px-4 text-[#dde2f4]">
@@ -469,6 +500,13 @@ export function LessonManagementPage() {
     <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <AppToast message={message} tone={message.startsWith('Đang ') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
+      <StudentLearningReportModal
+        isOpen={isStudentReportOpen}
+        isLoading={isStudentReportLoading}
+        report={studentReport}
+        error={studentReportError}
+        onClose={closeStudentLearningReport}
+      />
 
       {user?.role === 'tutor' && (
         <CreateCourseModal
@@ -874,8 +912,22 @@ export function LessonManagementPage() {
                       <div className="divide-y divide-[#253047]">
                         {displayedEnrollments.map((enrollment) => (
                           <article key={enrollment._id} className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <h3 className="text-[18px] font-bold">{getEnrollmentUserName(enrollment)}</h3>
+                            <div className="min-w-0">
+                              {enrollmentView === 'active' ? (
+                                <button
+                                  className="group/student inline-flex max-w-full items-center gap-2 text-left text-[18px] font-bold text-white outline-none transition hover:text-[#adc7ff] focus-visible:rounded focus-visible:ring-2 focus-visible:ring-[#adc7ff]/60"
+                                  type="button"
+                                  title="Xem tiến độ và kết quả quiz"
+                                  onClick={() => void openStudentLearningReport(enrollment)}
+                                >
+                                  <span className="truncate">{getEnrollmentUserName(enrollment)}</span>
+                                  <span className="material-symbols-outlined shrink-0 text-[18px] text-[#657188] transition group-hover/student:translate-x-0.5 group-hover/student:text-[#adc7ff]">
+                                    monitoring
+                                  </span>
+                                </button>
+                              ) : (
+                                <h3 className="text-[18px] font-bold">{getEnrollmentUserName(enrollment)}</h3>
+                              )}
                               <p className="mt-1 text-[14px] text-[#b8c1d6]">{getEnrollmentUserEmail(enrollment)}</p>
                               <p className={`mt-2 font-mono text-[12px] ${enrollmentView === 'active' ? 'text-[#24dfba]' : 'text-[#ffc080]'}`}>
                                 Trạng thái: {enrollmentView === 'active' ? 'đang học' : 'chờ duyệt'}
