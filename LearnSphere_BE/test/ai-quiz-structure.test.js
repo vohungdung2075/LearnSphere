@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseGeneratedQuestions } from "../src/services/ai.service.js";
+import { parseGeneratedQuestions } from "../src/utils/aiQuizStructure.js";
 
 const question = {
 	content: "Câu hỏi mẫu?",
