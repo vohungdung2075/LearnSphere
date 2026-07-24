@@ -73,7 +73,10 @@ export const enrollCourse = async (courseId, studentId) => {
 export const unenrollCourse = async (courseId, studentId) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
 
-	const enrollment = await Enrollment.findOne({ user_id: studentId, course_id: courseId });
+	const [enrollment, course] = await Promise.all([
+		Enrollment.findOne({ user_id: studentId, course_id: courseId }),
+		Course.findOne({ _id: courseId, is_deleted: false }).select("title created_by"),
+	]);
     if (!enrollment) throw new Error("ENROLLMENT_NOT_FOUND");
 
 	const activeAttempt = await QuizAttempt.exists({
@@ -85,7 +88,23 @@ export const unenrollCourse = async (courseId, studentId) => {
 	if (activeAttempt) throw new Error("ACTIVE_QUIZ_ATTEMPT_EXISTS");
 
 	await enrollment.deleteOne();
-    return { message: "Unenrolled from course successfully" };
+	if (course?.created_by) {
+		await createNotificationBestEffort({
+			recipient_id: course.created_by,
+			type: "enrollment",
+			title: "Học viên đã rời khóa học",
+			message: `Một học viên đã hủy đăng ký khóa học "${course.title}".`,
+			link: `/lesson-management?course_id=${courseId}`,
+			metadata: {
+				action: "view_enrollments",
+				course_id: courseId,
+				enrollment_id: enrollment._id,
+				student_id: studentId,
+			},
+		}, `enrollment:${enrollment._id}:student-left`);
+	}
+
+    return { message: "Hủy đăng ký khóa học thành công." };
 };
 
 
@@ -164,7 +183,7 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 	const course = await Course.findOne({ _id: courseId, is_deleted: false });
 	if (!course) throw new Error("COURSE_NOT_FOUND");
 
-	if (userRole !== "admin" && course.created_by.toString() !== userId.toString()) {
+	if (userRole !== "tutor" || course.created_by.toString() !== userId.toString()) {
 		throw new Error("FORBIDDEN_COURSE_ACTION");
 	}
 
@@ -196,40 +215,63 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 };
 
 
-export const rejectEnrollment = async (courseId, enrollmentId, userId, userRole) => {
+export const removeEnrollment = async (courseId, enrollmentId, userId, userRole) => {
 	if (!mongoose.Types.ObjectId.isValid(courseId)) throw new Error("INVALID_COURSE_ID");
 	if (!mongoose.Types.ObjectId.isValid(enrollmentId)) throw new Error("INVALID_ENROLLMENT_ID");
 
 	const course = await Course.findOne({ _id: courseId, is_deleted: false });
     if (!course) throw new Error("COURSE_NOT_FOUND");
 
-	if (userRole !== "admin" && course.created_by.toString() !== userId.toString()) {
+	if (userRole !== "tutor" || course.created_by.toString() !== userId.toString()) {
 		throw new Error("FORBIDDEN_COURSE_ACTION");
 	}
 
-	const enrollment = await Enrollment.findOneAndDelete({
+	const enrollment = await Enrollment.findOne({
 		_id: enrollmentId,
 		course_id: courseId,
-		status: "pending",
 	});
-	if (!enrollment) {
-		const currentEnrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId })
-			.select("status");
-		if (!currentEnrollment) throw new Error("ENROLLMENT_NOT_FOUND");
-		if (currentEnrollment.status === "active") throw new Error("CANNOT_REJECT_ACTIVE_ENROLLMENT");
-		throw new Error("ENROLLMENT_STATE_CHANGED");
+	if (!enrollment) throw new Error("ENROLLMENT_NOT_FOUND");
+
+	if (enrollment.status === "active") {
+		const activeAttempt = await QuizAttempt.exists({
+			user_id: enrollment.user_id,
+			course_id: courseId,
+			status: "in_progress",
+			expires_at: { $gt: new Date() },
+		});
+		if (activeAttempt) throw new Error("ACTIVE_QUIZ_ATTEMPT_EXISTS");
 	}
 
+	const removedEnrollment = await Enrollment.findOneAndDelete({
+		_id: enrollmentId,
+		course_id: courseId,
+		status: enrollment.status,
+	});
+	if (!removedEnrollment) throw new Error("ENROLLMENT_STATE_CHANGED");
+
 	const studentId = enrollment.user_id;
+	const wasPending = enrollment.status === "pending";
 
 	await createNotificationBestEffort({
 		recipient_id: studentId,
 		type: "enrollment",
-		title: "Yêu cầu đăng ký bị từ chối",
-		message: `Yêu cầu tham gia khóa học "${course.title}" của bạn chưa được chấp nhận.`,
+		title: wasPending ? "Yêu cầu đăng ký bị từ chối" : "Bạn đã được xóa khỏi khóa học",
+		message: wasPending
+			? `Yêu cầu tham gia khóa học "${course.title}" của bạn chưa được chấp nhận.`
+			: `Giảng viên đã xóa bạn khỏi khóa học "${course.title}".`,
 		link: `/my-courses`,
-		metadata: { action: "view_my_courses", course_id: courseId, enrollment_id: enrollmentId },
-	}, `enrollment:${enrollmentId}:rejected`);
+		metadata: {
+			action: "view_my_courses",
+			course_id: courseId,
+			enrollment_id: enrollmentId,
+			previous_status: enrollment.status,
+		},
+	}, `enrollment:${enrollmentId}:${wasPending ? "rejected" : "removed"}`);
 
-	return { message: "Enrollment request rejected successfully" };
+	return {
+		message: wasPending
+			? "Đã từ chối yêu cầu đăng ký."
+			: "Đã xóa học viên khỏi khóa học.",
+		removed_status: enrollment.status,
+	};
 };

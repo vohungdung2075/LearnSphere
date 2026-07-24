@@ -1,4 +1,4 @@
-import { enrollCourse, unenrollCourse, getMyCourses, getCourseEnrollments, approveEnrollment, rejectEnrollment } from "../services/enrollment.service.js";
+import { enrollCourse, unenrollCourse, getMyCourses, getCourseEnrollments, approveEnrollment, removeEnrollment } from "../services/enrollment.service.js";
 
 export const handleEnrollCourse = async (req, res) => {
 	const { course_id } = req.params ?? {};
@@ -98,10 +98,10 @@ export const handleApproveEnrollment = async (req, res) => {
 };
 
 
-export const handleRejectEnrollment = async (req, res) => {
+export const handleRemoveEnrollment = async (req, res) => {
 	const { course_id, enrollment_id } = req.params;
 	try {
-		const result = await rejectEnrollment(
+		const result = await removeEnrollment(
 			course_id,
 			enrollment_id,
 			req.user._id,
@@ -112,11 +112,11 @@ export const handleRejectEnrollment = async (req, res) => {
         if (error.message === "INVALID_COURSE_ID" || error.message === "INVALID_ENROLLMENT_ID") return res.status(400).json({ message: "Invalid ID format" });
         if (error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Course not found" });
         if (error.message === "ENROLLMENT_NOT_FOUND") return res.status(404).json({ message: "Enrollment request not found" });
-        if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "You don't have permission to reject this enrollment" });
-        if (error.message === "CANNOT_REJECT_ACTIVE_ENROLLMENT") return res.status(409).json({ message: "Cannot reject an already active enrollment" });
+        if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "You don't have permission to remove this enrollment" });
+        if (error.message === "ACTIVE_QUIZ_ATTEMPT_EXISTS") return res.status(409).json({ message: "Học viên đang làm quiz; chưa thể xóa khỏi khóa học." });
         if (error.message === "ENROLLMENT_STATE_CHANGED") return res.status(409).json({ message: "Enrollment state changed; refresh and try again" });
 
-		console.error("Reject enrollment error:", error);
+		console.error("Remove enrollment error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
 };

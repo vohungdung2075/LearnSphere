@@ -536,8 +536,8 @@ export const api = {
     });
   },
 
-  rejectEnrollment(courseId: string, enrollmentId: string) {
-    return request<{ message: string }>(`/courses/${courseId}/enrollments/${enrollmentId}`, {
+  removeEnrollment(courseId: string, enrollmentId: string) {
+    return request<{ message: string; removed_status: Enrollment['status'] }>(`/courses/${courseId}/enrollments/${enrollmentId}`, {
       method: 'DELETE',
     });
   },

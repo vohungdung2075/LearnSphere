@@ -1,6 +1,6 @@
 import express from "express";
 import { handleCreateCourse, handleGetAllCourses, handleGetCourseById, handleUpdateCourse, handleDeleteCourse, handleGetDeletedCourses, handleRestoreCourse, handlePermanentlyDeleteCourse } from "../controllers/course.controller.js";
-import { handleEnrollCourse, handleUnenrollCourse, handleGetCourseEnrollments, handleApproveEnrollment, handleRejectEnrollment } from "../controllers/enrollment.controller.js";
+import { handleEnrollCourse, handleUnenrollCourse, handleGetCourseEnrollments, handleApproveEnrollment, handleRemoveEnrollment } from "../controllers/enrollment.controller.js";
 import { handleCreateLesson, handleGetCourseLessons, handleGetCourseProgress } from "../controllers/lesson.controller.js";
 import { handleCreateQuiz, handleGetCourseQuizzes } from "../controllers/quiz.controller.js";
 import { handleCreateCourseDiscussion, handleCreateCourseDiscussionReply, handleGetCourseDiscussions } from "../controllers/discussion.controller.js";
@@ -22,8 +22,8 @@ router.post("/:course_id/enroll", protect, authorize("student"), handleEnrollCou
 router.delete("/:course_id/enroll", protect, authorize("student"), handleUnenrollCourse);
 
 router.get("/:course_id/enrollments", protect, authorize("tutor", "admin"), handleGetCourseEnrollments);
-router.patch("/:course_id/enrollments/:enrollment_id/approve", protect, authorize("tutor", "admin"), handleApproveEnrollment);
-router.delete("/:course_id/enrollments/:enrollment_id", protect, authorize("tutor", "admin"), handleRejectEnrollment);
+router.patch("/:course_id/enrollments/:enrollment_id/approve", protect, authorize("tutor"), handleApproveEnrollment);
+router.delete("/:course_id/enrollments/:enrollment_id", protect, authorize("tutor"), handleRemoveEnrollment);
 
 router.get("/:course_id/lessons", protect, handleGetCourseLessons);
 router.post("/:course_id/lessons", protect, authorize("tutor"), handleCreateLesson);
