@@ -30,7 +30,7 @@ export const aiRateLimit = async (req, res, next) => {
 					expires_at: new Date(resetAt + windowMs),
 				},
 			},
-			{ new: true, upsert: true, runValidators: true },
+			{ returnDocument: "after", upsert: true, runValidators: true },
 		);
 		res.setHeader("X-RateLimit-Remaining", String(Math.max(0, limit - bucket.count)));
 		return next();
@@ -48,7 +48,7 @@ export const aiRateLimit = async (req, res, next) => {
 		const racedBucket = await AIRateLimitBucket.findOneAndUpdate(
 			{ user_id: userId, window_key: windowKey, count: { $lt: limit } },
 			{ $inc: { count: 1 } },
-			{ new: true, runValidators: true },
+			{ returnDocument: "after", runValidators: true },
 		);
 		if (racedBucket) {
 			res.setHeader("X-RateLimit-Remaining", String(Math.max(0, limit - racedBucket.count)));

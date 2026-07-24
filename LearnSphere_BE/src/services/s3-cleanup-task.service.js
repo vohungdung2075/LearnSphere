@@ -45,7 +45,7 @@ const claimTask = async (taskId) => {
 			$set: { status: "processing", locked_at: now, last_error: "" },
 			$inc: { attempts: 1 },
 		},
-		{ new: true, sort: { next_attempt_at: 1 } },
+		{ returnDocument: "after", sort: { next_attempt_at: 1 } },
 	);
 };
 

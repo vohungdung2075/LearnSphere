@@ -213,7 +213,7 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 	const enrollment = await Enrollment.findOneAndUpdate(
 		{ _id: enrollmentId, course_id: courseId, status: "pending" },
 		{ $set: { status: "active", approved_at: new Date() } },
-		{ new: true, runValidators: true },
+		{ returnDocument: "after", runValidators: true },
 	);
 	if (!enrollment) {
 		const currentEnrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId })

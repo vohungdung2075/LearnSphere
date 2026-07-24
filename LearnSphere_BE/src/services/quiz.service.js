@@ -150,7 +150,7 @@ export const deleteQuiz = async (quizId, userId, userRole) => {
 	const lockedQuiz = await Quiz.findOneAndUpdate(
 		{ _id: quiz._id, accepting_attempts: { $ne: false } },
 		{ $set: { accepting_attempts: false } },
-		{ new: true },
+		{ returnDocument: "after" },
 	);
 	if (!lockedQuiz) throw new Error("QUIZ_DELETE_IN_PROGRESS");
 
@@ -414,7 +414,7 @@ export const submitQuiz = async (attemptId, submittedAnswers, studentId) => {
 		const expiredAttempt = await QuizAttempt.findOneAndUpdate(
 			{ _id: attempt._id, user_id: studentId, status: "in_progress" },
 			{ $set: { status: "expired" } },
-			{ new: true },
+			{ returnDocument: "after" },
 		);
 
 		if (!expiredAttempt) {
@@ -536,7 +536,7 @@ export const submitQuiz = async (attemptId, submittedAnswers, studentId) => {
 				answers: attemptAnswers,
 			},
 		},
-		{ new: true, runValidators: true },
+		{ returnDocument: "after", runValidators: true },
 	);
 
 	if (!submittedAttempt) {

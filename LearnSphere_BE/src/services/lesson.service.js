@@ -300,7 +300,7 @@ export const completeLesson = async (lessonId, studentId) => {
 				completed_at: new Date(),
 			},
 		},
-		{ new: true, upsert: true, setDefaultsOnInsert: true },
+		{ returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
 	);
 	return progress;
 };

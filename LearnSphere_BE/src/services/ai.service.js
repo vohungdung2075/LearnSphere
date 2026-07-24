@@ -295,7 +295,7 @@ export const summarizeLessonWithAI = async ({ lessonId, userId, userRole, forceR
 				ai_summary_error: "",
 			},
 		},
-		{ new: true },
+		{ returnDocument: "after" },
 	);
 	if (!claimedLesson) throw new Error("AI_SUMMARY_IN_PROGRESS");
 
@@ -355,7 +355,7 @@ export const summarizeLessonWithAI = async ({ lessonId, userId, userRole, forceR
 				ai_summary_error: "",
 			},
 		},
-		{ new: true },
+		{ returnDocument: "after" },
 	);
 	if (!completed) throw new Error("AI_SUMMARY_SOURCE_CHANGED");
 

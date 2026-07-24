@@ -335,7 +335,7 @@ const markMultipartUploaded = async (sessionId) => UploadSession.findOneAndUpdat
 			last_error: "",
 		},
 	},
-	{ new: true },
+	{ returnDocument: "after" },
 ).select("+multipart_upload_id");
 
 const reconcileCompletedMultipart = async (session) => {
@@ -500,7 +500,7 @@ export const completeMultipartUpload = async (sessionId, completedParts, userId)
 			},
 			$inc: { attempts: 1 },
 		},
-		{ new: true },
+		{ returnDocument: "after" },
 	).select("+multipart_upload_id");
 
 	if (!claimedSession) {

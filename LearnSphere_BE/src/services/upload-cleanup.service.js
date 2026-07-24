@@ -67,7 +67,7 @@ const claimExpiredUpload = async () => {
 			$set: { status: "processing", locked_at: now, last_error: "" },
 			$inc: { attempts: 1 },
 		},
-		{ new: true, sort: { expires_at: 1 } },
+		{ returnDocument: "after", sort: { expires_at: 1 } },
 	).select("+multipart_upload_id");
 };
 

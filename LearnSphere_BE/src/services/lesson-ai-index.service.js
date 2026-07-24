@@ -228,7 +228,7 @@ export const indexLessonFilesForAI = async (lessonId, userId, userRole) => {
 				ai_index_error: "",
 			},
 		},
-		{ new: true },
+		{ returnDocument: "after" },
 	).select("+ai_document_text +ai_indexed_document_key +ai_index_run_id");
 	if (!claimedLesson) throw new Error("AI_INDEX_IN_PROGRESS");
 
@@ -263,7 +263,7 @@ export const indexLessonFilesForAI = async (lessonId, userId, userRole) => {
 				ai_index_error: issues.join("; "),
 			},
 		},
-		{ new: true },
+		{ returnDocument: "after" },
 	).select("+ai_document_text");
 	if (!completedLesson) throw new Error("AI_INDEX_SOURCE_CHANGED");
 
