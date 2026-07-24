@@ -6,7 +6,7 @@ Base URL:
 /api
 ```
 
-Header cho các API cần đăng nhập:
+Frontend web dùng cookie `learnsphere_access_token` với `HttpOnly`, `Secure` ở production và `SameSite=Lax`. Client API ngoài trình duyệt vẫn có thể dùng header tương thích:
 
 ```text
 Authorization: Bearer <access_token>
@@ -37,8 +37,6 @@ Response:
 ```json
 {
 	"message": "Register successfully",
-	"access_token": "jwt_token_here",
-	"token_type": "bearer",
 	"user": {
 		"id": "6870f8c90db5248718eb6e31",
 		"full_name": "Vo Hung Dung",
@@ -67,8 +65,6 @@ Response:
 
 ```json
 {
-	"access_token": "jwt_token_here",
-	"token_type": "bearer",
 	"user": {
 		"id": "6870f8c90db5248718eb6e31",
 		"full_name": "Vo Hung Dung",
@@ -77,6 +73,8 @@ Response:
 	}
 }
 ```
+
+Hai endpoint register/login thành công sẽ gửi JWT qua `Set-Cookie`; JavaScript frontend không đọc được token.
 
 ### 1.3. Lấy thông tin người dùng hiện tại
 
@@ -97,6 +95,14 @@ Response:
 	"updated_at": "2026-07-13T08:00:00.000Z"
 }
 ```
+
+### 1.4. Đăng xuất
+
+```http
+POST /api/auth/logout
+```
+
+Backend xóa cookie đăng nhập. Endpoint có thể gọi ngay cả khi phiên đã hết hạn.
 
 ### 1.4. Yêu cầu đặt lại mật khẩu
 
@@ -1168,6 +1174,8 @@ expires_at = started_at + time_limit
 
 Nếu student gọi lại endpoint khi vẫn còn một attempt `in_progress` chưa hết hạn, backend trả lại attempt đang làm thay vì tạo attempt mới. Nếu attempt cũ đã hết hạn, backend chuyển trạng thái của attempt đó thành `expired` rồi tạo attempt mới. Unique partial index và xử lý duplicate key bảo đảm mỗi student chỉ có tối đa một attempt `in_progress` cho một quiz, kể cả khi nhiều request `/start` đến đồng thời.
 
+Ngay khi tạo attempt, backend lưu `question_snapshot` riêng gồm nội dung, điểm và đáp án tại thời điểm bắt đầu. Response cho student loại bỏ `is_correct`; khi submit backend luôn chấm theo snapshot này, không theo Quiz có thể đã được chỉnh sửa sau đó.
+
 Response:
 
 ```json
@@ -1646,7 +1654,7 @@ AI_RATE_LIMIT_WINDOW_MS=60000
 
 Nếu không khai báo `AI_PROVIDER`, backend mặc định dùng `bedrock` để tương thích cấu hình cũ. Bedrock dùng credential chain mặc định của AWS SDK; khi deploy nên gắn IAM role cho compute service và IAM principal cần tối thiểu `bedrock:InvokeModel`.
 
-Các endpoint gọi model được giới hạn theo user; mặc định 10 request trong 60 giây và trả `AI_RATE_LIMITED` kèm `Retry-After` khi vượt giới hạn. Giới hạn in-memory phù hợp một backend instance; khi scale nhiều instance cần chuyển state sang Redis. Khi provider hết quota, endpoint trả `429` với code `AI_THROTTLED`.
+Các endpoint gọi model được giới hạn theo user; mặc định 10 request trong 60 giây và trả `AI_RATE_LIMITED` kèm `Retry-After` khi vượt giới hạn. Bộ đếm được lưu atomic trong MongoDB nên vẫn đúng khi restart hoặc chạy nhiều backend instance. Khi provider hết quota, endpoint trả `429` với code `AI_THROTTLED`.
 
 ---
 
@@ -1734,7 +1742,7 @@ DELETE /api/files/uploads/{upload_session_id}
 Authorization: Bearer <access_token>
 ```
 
-Mọi upload tạo một `UploadSession`. Session được xóa khi file đã gắn thành công vào Course, Lesson hoặc User. Session chưa được gắn sau `UPLOAD_SESSION_TTL_HOURS` sẽ được scheduler đối chiếu reference rồi abort multipart/xóa object S3. Việc đối chiếu reference giúp file đang dùng không bị xóa nếu thao tác đánh dấu session gặp lỗi tạm thời.
+Mọi upload tạo một `UploadSession`. Khi file đã gắn vào Course/Lesson/User, session được giữ thêm một khoảng ngắn để các request confirm/complete lặp lại vẫn idempotent; cleanup worker sau đó đối chiếu reference và chỉ xóa session. Session chưa được gắn sau `UPLOAD_SESSION_TTL_HOURS` sẽ được scheduler abort multipart/xóa object S3. Việc đối chiếu reference giúp file đang dùng không bị xóa nếu thao tác đánh dấu session gặp lỗi tạm thời.
 
 ### 6.2. Lấy URL thumbnail khóa học
 

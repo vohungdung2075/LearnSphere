@@ -19,12 +19,17 @@ const handleUploadError = (error, res, context) => {
 	].includes(error.message)) {
 		return res.status(400).json({ message: error.message, code: error.message });
 	}
+	if (error.message === "UPLOAD_COMPLETION_IN_PROGRESS") {
+		return res.status(409).json({ message: error.message, code: error.message });
+	}
 	if (error.message === "FILE_TOO_LARGE") return res.status(413).json({ message: "File exceeds the allowed size" });
 	if (["COURSE_NOT_FOUND", "UPLOAD_SESSION_NOT_FOUND", "FILE_NOT_FOUND_IN_S3"].includes(error.message)) {
 		return res.status(404).json({ message: error.message, code: error.message });
 	}
 	if (error.message === "FORBIDDEN_FILE_ACTION") return res.status(403).json({ message: "You cannot manage this upload" });
-	if (["S3_HEAD_FAILED", "S3_MULTIPART_START_FAILED", "S3_DELETE_FAILED"].includes(error.message)) {
+	if ([
+		"S3_HEAD_FAILED", "S3_MULTIPART_START_FAILED", "S3_MULTIPART_COMPLETE_FAILED", "S3_DELETE_FAILED",
+	].includes(error.message)) {
 		return res.status(502).json({ message: error.message, code: error.message });
 	}
 	console.error(`${context} error:`, error);

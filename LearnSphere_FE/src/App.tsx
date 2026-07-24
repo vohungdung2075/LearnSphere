@@ -1,22 +1,23 @@
-import { useEffect, useState, type ReactNode } from 'react';
-import { HomePage } from './pages/HomePage';
-import { AdminUsersPage } from './pages/AdminUsersPage';
-import { AIAssistantPage } from './pages/AIAssistantPage';
-import { CourseCatalogPage } from './pages/CourseCatalogPage';
-import { CourseDetailPage } from './pages/CourseDetailPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { LessonDetailPage } from './pages/LessonDetailPage';
-import { LessonManagementPage } from './pages/LessonManagementPage';
-import { LockedCoursesPage } from './pages/LockedCoursesPage';
-import { LoginPage } from './pages/LoginPage';
-import { MyCoursesPage } from './pages/MyCoursesPage';
-import { ProfilePage } from './pages/ProfilePage';
-import { QuizPage } from './pages/QuizPage';
-import { QuestionBuilderPage } from './pages/QuestionBuilderPage';
-import { ResetPasswordPage } from './pages/ResetPasswordPage';
-import { SignupPage } from './pages/SignupPage';
-import { SystemMonitoringPage } from './pages/SystemMonitoringPage';
-import { api, clearSession, getToken, saveSession, type Role, type User } from './services/api';
+import { Fragment, Suspense, lazy, useEffect, useState, type ReactNode } from 'react';
+import { api, clearSession, saveSession, type Role, type User } from './services/api';
+
+const HomePage = lazy(() => import('./pages/HomePage').then((module) => ({ default: module.HomePage })));
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage').then((module) => ({ default: module.AdminUsersPage })));
+const AIAssistantPage = lazy(() => import('./pages/AIAssistantPage').then((module) => ({ default: module.AIAssistantPage })));
+const CourseCatalogPage = lazy(() => import('./pages/CourseCatalogPage').then((module) => ({ default: module.CourseCatalogPage })));
+const CourseDetailPage = lazy(() => import('./pages/CourseDetailPage').then((module) => ({ default: module.CourseDetailPage })));
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) => ({ default: module.DashboardPage })));
+const LessonDetailPage = lazy(() => import('./pages/LessonDetailPage').then((module) => ({ default: module.LessonDetailPage })));
+const LessonManagementPage = lazy(() => import('./pages/LessonManagementPage').then((module) => ({ default: module.LessonManagementPage })));
+const LockedCoursesPage = lazy(() => import('./pages/LockedCoursesPage').then((module) => ({ default: module.LockedCoursesPage })));
+const LoginPage = lazy(() => import('./pages/LoginPage').then((module) => ({ default: module.LoginPage })));
+const MyCoursesPage = lazy(() => import('./pages/MyCoursesPage').then((module) => ({ default: module.MyCoursesPage })));
+const ProfilePage = lazy(() => import('./pages/ProfilePage').then((module) => ({ default: module.ProfilePage })));
+const QuizPage = lazy(() => import('./pages/QuizPage').then((module) => ({ default: module.QuizPage })));
+const QuestionBuilderPage = lazy(() => import('./pages/QuestionBuilderPage').then((module) => ({ default: module.QuestionBuilderPage })));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })));
+const SignupPage = lazy(() => import('./pages/SignupPage').then((module) => ({ default: module.SignupPage })));
+const SystemMonitoringPage = lazy(() => import('./pages/SystemMonitoringPage').then((module) => ({ default: module.SystemMonitoringPage })));
 
 type RouteDefinition = {
   element: ReactNode;
@@ -60,6 +61,21 @@ function AccessDenied({ user }: { user: User }) {
   );
 }
 
+function NotFoundPage() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-[#0d131f] px-4 text-[#dde2f4]">
+      <section className="max-w-lg rounded-2xl border border-[#414754] bg-[#161c28] p-8 text-center shadow-2xl">
+        <p className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-[#adc7ff]">404</p>
+        <h1 className="mt-3 text-[30px] font-semibold">Không tìm thấy trang</h1>
+        <p className="mt-3 leading-7 text-[#c1c6d7]">Đường dẫn này không tồn tại hoặc đã được thay đổi.</p>
+        <a className="mt-7 inline-flex rounded-xl bg-[#adc7ff] px-5 py-3 font-bold text-[#002e68]" href="/">
+          Về trang chủ
+        </a>
+      </section>
+    </main>
+  );
+}
+
 function getRoute(pathname: string): RouteDefinition {
   if (/^\/reset-password(?:\/[^/]+)?\/?$/.test(pathname)) {
     return { element: <ResetPasswordPage /> };
@@ -84,16 +100,60 @@ function getRoute(pathname: string): RouteDefinition {
     '/profile': { element: <ProfilePage />, requiresAuth: true },
   };
 
-  return routes[pathname] ?? routes['/'];
+  return routes[pathname] ?? { element: <NotFoundPage /> };
 }
 
 export default function App() {
-  const pathname = window.location.pathname;
+  const [locationHref, setLocationHref] = useState(
+    () => `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  );
+  const pathname = new URL(locationHref, window.location.origin).pathname;
   const route = getRoute(pathname);
   const [authState, setAuthState] = useState<{ isLoading: boolean; user: User | null }>({
     isLoading: true,
     user: null,
   });
+
+  useEffect(() => {
+    const syncLocation = () => {
+      setLocationHref(`${window.location.pathname}${window.location.search}${window.location.hash}`);
+    };
+    const handleInternalLink = (event: MouseEvent) => {
+      if (
+        event.defaultPrevented ||
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) return;
+
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest('a');
+      if (!anchor || anchor.target && anchor.target !== '_self' || anchor.hasAttribute('download')) return;
+
+      const destination = new URL(anchor.href, window.location.href);
+      if (destination.origin !== window.location.origin) return;
+      const onlyHashChanged =
+        destination.pathname === window.location.pathname &&
+        destination.search === window.location.search &&
+        destination.hash !== window.location.hash;
+      if (onlyHashChanged || anchor.getAttribute('href') === '#') return;
+
+      event.preventDefault();
+      window.history.pushState({}, '', `${destination.pathname}${destination.search}${destination.hash}`);
+      syncLocation();
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    };
+
+    window.addEventListener('popstate', syncLocation);
+    document.addEventListener('click', handleInternalLink);
+    return () => {
+      window.removeEventListener('popstate', syncLocation);
+      document.removeEventListener('click', handleInternalLink);
+    };
+  }, []);
 
   useEffect(() => {
     let isActive = true;
@@ -103,18 +163,11 @@ export default function App() {
     }
 
     async function bootstrapAuth() {
-      const token = getToken();
-      if (!token) {
-        clearSession();
-        markAnonymous();
-        return;
-      }
-
       try {
         const user = await api.me();
         if (!isActive) return;
 
-        saveSession({ access_token: token, token_type: 'bearer', user });
+        saveSession({ user });
         setAuthState({ isLoading: false, user });
       } catch {
         clearSession();
@@ -148,5 +201,9 @@ export default function App() {
     return <Redirect to="/dashboard" />;
   }
 
-  return route.element;
+  return (
+    <Suspense fallback={<LoadingScreen message="Đang tải trang..." />}>
+      <Fragment key={locationHref}>{route.element}</Fragment>
+    </Suspense>
+  );
 }

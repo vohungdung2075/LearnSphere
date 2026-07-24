@@ -48,6 +48,54 @@ const AttemptAnswerSchema = new mongoose.Schema(
 	{ _id: false },
 );
 
+const SnapshotAnswerSchema = new mongoose.Schema(
+	{
+		_id: {
+			type: mongoose.Schema.Types.ObjectId,
+			required: true,
+		},
+		content: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		is_correct: {
+			type: Boolean,
+			required: true,
+		},
+	},
+	{ _id: false },
+);
+
+const SnapshotQuestionSchema = new mongoose.Schema(
+	{
+		_id: {
+			type: mongoose.Schema.Types.ObjectId,
+			required: true,
+		},
+		content: {
+			type: String,
+			required: true,
+			trim: true,
+		},
+		question_type: {
+			type: String,
+			enum: ["single_choice", "multiple_choice"],
+			required: true,
+		},
+		point: {
+			type: Number,
+			required: true,
+			min: 0.01,
+		},
+		answers: {
+			type: [SnapshotAnswerSchema],
+			required: true,
+		},
+	},
+	{ _id: false },
+);
+
 const QuizAttemptSchema = new mongoose.Schema(
 	{
 		user_id: {
@@ -112,6 +160,11 @@ const QuizAttemptSchema = new mongoose.Schema(
 			type: Number,
 			default: 0,
 			min: 0,
+		},
+		question_snapshot: {
+			type: [SnapshotQuestionSchema],
+			default: undefined,
+			select: false,
 		},
 		answers: {
 			type: [AttemptAnswerSchema],

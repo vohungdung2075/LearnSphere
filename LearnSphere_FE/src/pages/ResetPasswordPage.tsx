@@ -92,6 +92,7 @@ export function ResetPasswordPage() {
                       type={showPassword ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      minLength={6}
                       required
                     />
                     <button
@@ -120,6 +121,7 @@ export function ResetPasswordPage() {
                       type={showPassword ? 'text' : 'password'}
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
+                      minLength={6}
                       required
                     />
                   </div>

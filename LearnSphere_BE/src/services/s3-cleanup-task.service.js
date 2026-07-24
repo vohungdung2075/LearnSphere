@@ -1,17 +1,21 @@
 import S3CleanupTask from "../models/S3CleanupTask.model.js";
-import { deleteCourseS3Prefix, deleteS3Objects } from "./file.service.js";
+import { deleteCourseS3Prefix, deleteS3Objects } from "./s3-storage.service.js";
 
 const PROCESSING_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_RETRY_DELAY_MS = 6 * 60 * 60 * 1000;
 
 const normalizeKeys = (keys = []) => [...new Set(keys.filter((key) => typeof key === "string" && key.trim()).map((key) => key.trim()))];
 
-export const queueS3ObjectsCleanup = async (objectKeys, session) => {
+export const queueS3ObjectsCleanup = async (objectKeys, session, context = "unspecified") => {
 	const keys = normalizeKeys(objectKeys);
 	if (!keys.length) return null;
 
 	const [task] = await S3CleanupTask.create(
-		[{ cleanup_type: "objects", object_keys: keys }],
+		[{
+			cleanup_type: "objects",
+			object_keys: keys,
+			context: String(context || "unspecified").slice(0, 200),
+		}],
 		{ session },
 	);
 	return task;

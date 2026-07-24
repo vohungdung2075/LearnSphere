@@ -192,6 +192,11 @@ export const invokeAI = async (request) => {
 			if (fallback === "groq") return await invokeGroq(request);
 		} catch (fallbackError) {
 			console.error(`[AI] Fallback provider ${fallback} also failed: ${fallbackError.message}`);
+			primaryError.fallback_error = {
+				provider: fallback,
+				code: fallbackError.message,
+				status: fallbackError.cause?.status,
+			};
 			throw primaryError;
 		}
 	}

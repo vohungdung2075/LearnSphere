@@ -35,7 +35,19 @@ export const markUploadAttachedBestEffort = async (fileKeys = [], context = "uns
 	const keys = [...new Set(fileKeys.filter((key) => typeof key === "string" && key.trim()).map((key) => key.trim()))];
 	if (!keys.length) return;
 	try {
-		await UploadSession.deleteMany({ file_key: { $in: keys } });
+		// Keep the completed session briefly so confirm/complete retries remain idempotent.
+		// The cleanup worker will remove the session after verifying that the file is referenced.
+		await UploadSession.updateMany(
+			{ file_key: { $in: keys } },
+			{
+				$set: {
+					status: "uploaded",
+					locked_at: null,
+					last_error: "",
+					expires_at: new Date(Date.now() + 60 * 60 * 1000),
+				},
+			},
+		);
 	} catch (error) {
 		console.error(`Unable to mark upload attached (${context}); reference reconciliation will protect it:`, error.message);
 	}

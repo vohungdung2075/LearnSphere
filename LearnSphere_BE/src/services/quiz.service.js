@@ -3,18 +3,44 @@ import Quiz from "../models/Quiz.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
+import { requireActiveCourseCreator } from "./course-availability.service.js";
 
 const checkActiveAttemptsExist = async (quizId) => {
 	const hasActiveAttempt = await QuizAttempt.exists({ quiz_id: quizId, status: "in_progress", expires_at: { $gt: new Date() } });
 	if (hasActiveAttempt) throw new Error("QUIZ_HAS_ACTIVE_ATTEMPTS");
 };
 
-const formatStartAttempt = (attempt, quiz) => ({
+const createQuestionSnapshot = (quiz) => quiz.questions.map((question) => ({
+	_id: question._id,
+	content: question.content,
+	question_type: question.question_type,
+	point: question.point,
+	answers: question.answers.map((answer) => ({
+		_id: answer._id,
+		content: answer.content,
+		is_correct: answer.is_correct,
+	})),
+}));
+
+const ensureAttemptSnapshot = async (attempt, quiz) => {
+	if (Array.isArray(attempt.question_snapshot) && attempt.question_snapshot.length > 0) {
+		return attempt.question_snapshot;
+	}
+
+	// Backward compatibility for attempts created before snapshots were introduced.
+	// Persist immediately so every later request grades the exact same questions.
+	attempt.question_snapshot = createQuestionSnapshot(quiz);
+	attempt.total_questions = attempt.question_snapshot.length;
+	await attempt.save();
+	return attempt.question_snapshot;
+};
+
+const formatStartAttempt = (attempt, questions) => ({
 	attempt_id: attempt._id,
 	started_at: attempt.started_at,
 	expires_at: attempt.expires_at,
-	time_limit: quiz.time_limit,
-	questions: quiz.questions.map((question) => ({
+	time_limit: Math.max(1, Math.ceil((attempt.expires_at.getTime() - attempt.started_at.getTime()) / 60000)),
+	questions: questions.map((question) => ({
 		_id: question._id,
 		content: question.content,
 		question_type: question.question_type,
@@ -63,6 +89,7 @@ export const getCourseQuizzes = async (courseId, userId, userRole) => {
 	if (!course) throw new Error("COURSE_NOT_FOUND");
 
 	if (userRole === "student") {
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({ user_id: userId, course_id: courseId, status: "active" });
 		if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 	} else if (userRole === "tutor") {
@@ -82,6 +109,7 @@ export const updateQuiz = async (quizId, { title, description, time_limit, diffi
 
 	const course = await Course.findOne({ _id: quiz.course_id, is_deleted: false });
 	if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	const isOwner = course.created_by.toString() === userId.toString();
 	if (userRole !== "tutor" || !isOwner) throw new Error("FORBIDDEN_QUIZ_ACTION");
@@ -110,7 +138,7 @@ export const updateQuiz = async (quizId, { title, description, time_limit, diffi
 export const deleteQuiz = async (quizId, userId, userRole) => {
 	if (!mongoose.isValidObjectId(quizId)) throw new Error("INVALID_QUIZ_ID");
 
-	const quiz = await Quiz.findById(quizId);
+	const quiz = await Quiz.findById(quizId).select("+accepting_attempts");
 	if (!quiz) throw new Error("QUIZ_NOT_FOUND");
 
 	const course = await Course.findOne({ _id: quiz.course_id, is_deleted: false });
@@ -119,9 +147,21 @@ export const deleteQuiz = async (quizId, userId, userRole) => {
 	const isOwner = course.created_by.toString() === userId.toString();
 	if (userRole !== "tutor" || !isOwner) throw new Error("FORBIDDEN_QUIZ_ACTION");
 
-	await checkActiveAttemptsExist(quiz._id);
-	await QuizAttempt.deleteMany({ quiz_id: quiz._id });
-	await quiz.deleteOne();
+	const lockedQuiz = await Quiz.findOneAndUpdate(
+		{ _id: quiz._id, accepting_attempts: { $ne: false } },
+		{ $set: { accepting_attempts: false } },
+		{ new: true },
+	);
+	if (!lockedQuiz) throw new Error("QUIZ_DELETE_IN_PROGRESS");
+
+	try {
+		await checkActiveAttemptsExist(quiz._id);
+		await QuizAttempt.deleteMany({ quiz_id: quiz._id });
+		await Quiz.deleteOne({ _id: quiz._id, accepting_attempts: false });
+	} catch (error) {
+		await Quiz.updateOne({ _id: quiz._id }, { $set: { accepting_attempts: true } });
+		throw error;
+	}
 	return { message: "Quiz and its attempts deleted successfully" };
 };
 
@@ -271,24 +311,33 @@ export const deleteQuestion = async (quizId, questionId, userId, userRole) => {
 export const startQuiz = async (quizId, studentId) => {
 	if (!mongoose.isValidObjectId(quizId)) throw new Error("INVALID_QUIZ_ID");
 
-	const quiz = await Quiz.findById(quizId);
+	const quiz = await Quiz.findOne({
+		_id: quizId,
+		accepting_attempts: { $ne: false },
+	}).select("+accepting_attempts");
 	if (!quiz) throw new Error("QUIZ_NOT_FOUND");
 	if (!quiz.questions || quiz.questions.length === 0) throw new Error("QUIZ_HAS_NO_QUESTIONS");
 
 	const course = await Course.findOne({ _id: quiz.course_id, is_deleted: false });
 	if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	const enrollment = await Enrollment.findOne({ user_id: studentId, course_id: course._id, status: "active" });
 	if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 
-	const existingAttempt = await QuizAttempt.findOne({ user_id: studentId, quiz_id: quiz._id, status: "in_progress" });
+	const existingAttempt = await QuizAttempt.findOne({
+		user_id: studentId,
+		quiz_id: quiz._id,
+		status: "in_progress",
+	}).select("+question_snapshot");
 
 	if (existingAttempt) {
 		if (new Date() > existingAttempt.expires_at) {
 			existingAttempt.status = "expired";
 			await existingAttempt.save();
 		} else {
-			return formatStartAttempt(existingAttempt, quiz);
+			const questions = await ensureAttemptSnapshot(existingAttempt, quiz);
+			return formatStartAttempt(existingAttempt, questions);
 		}
 	}
 
@@ -307,9 +356,28 @@ export const startQuiz = async (quizId, studentId) => {
 			total_score: 0,
 			correct_answers: 0,
 			total_questions: quiz.questions.length,
+			question_snapshot: createQuestionSnapshot(quiz),
 		});
 
-		return formatStartAttempt(newAttempt, quiz);
+		const quizStillAvailable = await Quiz.exists({
+			_id: quiz._id,
+			accepting_attempts: { $ne: false },
+		});
+		if (!quizStillAvailable) {
+			await QuizAttempt.deleteOne({ _id: newAttempt._id, status: "in_progress" });
+			throw new Error("QUIZ_NOT_FOUND");
+		}
+		const enrollmentStillActive = await Enrollment.exists({
+			user_id: studentId,
+			course_id: course._id,
+			status: "active",
+		});
+		if (!enrollmentStillActive) {
+			await QuizAttempt.deleteOne({ _id: newAttempt._id, status: "in_progress" });
+			throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
+		}
+
+		return formatStartAttempt(newAttempt, newAttempt.question_snapshot);
 	} catch (error) {
 		if (error.code === 11000) {
 			const concurrentAttempt = await QuizAttempt.findOne({
@@ -317,9 +385,12 @@ export const startQuiz = async (quizId, studentId) => {
 				quiz_id: quiz._id,
 				status: "in_progress",
 				expires_at: { $gt: new Date() },
-			});
+			}).select("+question_snapshot");
 
-			if (concurrentAttempt) return formatStartAttempt(concurrentAttempt, quiz);
+			if (concurrentAttempt) {
+				const questions = await ensureAttemptSnapshot(concurrentAttempt, quiz);
+				return formatStartAttempt(concurrentAttempt, questions);
+			}
 		}
 
 		throw error;
@@ -331,7 +402,7 @@ export const submitQuiz = async (attemptId, submittedAnswers, studentId) => {
 
 	const submittedAt = new Date();
 
-	const attempt = await QuizAttempt.findById(attemptId);
+	const attempt = await QuizAttempt.findById(attemptId).select("+question_snapshot");
 	if (!attempt) throw new Error("ATTEMPT_NOT_FOUND");
 
 	if (attempt.user_id.toString() !== studentId.toString()) throw new Error("ATTEMPT_ACCESS_DENIED");
@@ -356,16 +427,21 @@ export const submitQuiz = async (attemptId, submittedAnswers, studentId) => {
 
 	const course = await Course.findOne({ _id: attempt.course_id, is_deleted: false });
 	if (!course) throw new Error("COURSE_NOT_FOUND");
-
-	const quiz = await Quiz.findById(attempt.quiz_id);
-	if (!quiz) throw new Error("QUIZ_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	const enrollment = await Enrollment.findOne({ user_id: studentId, course_id: attempt.course_id, status: "active" });
 	if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 
 	if (!Array.isArray(submittedAnswers)) throw new Error("INVALID_SUBMISSION");
 
-	const quizQuestionIds = new Set(quiz.questions.map((q) => q._id.toString()));
+	let questions = attempt.question_snapshot;
+	if (!Array.isArray(questions) || questions.length === 0) {
+		const legacyQuiz = await Quiz.findById(attempt.quiz_id);
+		if (!legacyQuiz) throw new Error("QUIZ_NOT_FOUND");
+		questions = await ensureAttemptSnapshot(attempt, legacyQuiz);
+	}
+
+	const quizQuestionIds = new Set(questions.map((q) => q._id.toString()));
 	const submittedQuestionIds = new Set();
 
 	for (const submittedAnswer of submittedAnswers) {
@@ -394,7 +470,7 @@ export const submitQuiz = async (attemptId, submittedAnswers, studentId) => {
 	let correctAnswersCount = 0;
 	const attemptAnswers = [];
 
-	for (const question of quiz.questions) {
+	for (const question of questions) {
 		totalScore += question.point;
 
 		const userAns = submittedAnswers.find((ans) => ans.question_id.toString() === question._id.toString());
@@ -497,6 +573,7 @@ export const getQuizAttempts = async (quizId, userId, userRole) => {
 	const filter = { quiz_id: quizId };
 
 	if (userRole === "student") {
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({ user_id: userId, course_id: course._id, status: "active" });
 		if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 		filter.user_id = userId;
@@ -526,6 +603,9 @@ export const getAttemptById = async (attemptId, userId, userRole) => {
 		if (!attempt.user_id || attempt.user_id._id.toString() !== userId.toString()) {
 			throw new Error("ATTEMPT_ACCESS_DENIED");
 		}
+		const course = await Course.findOne({ _id: attempt.course_id, is_deleted: false });
+		if (!course) throw new Error("COURSE_NOT_FOUND");
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({ user_id: userId, course_id: attempt.course_id, status: "active" });
 		if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 	}

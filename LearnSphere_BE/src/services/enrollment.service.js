@@ -1,13 +1,16 @@
 import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
+import QuizAttempt from "../models/QuizAttempt.model.js";
 import { createNotificationBestEffort } from "./notification.service.js";
+import { requireActiveCourseCreator } from "./course-availability.service.js";
 
 export const enrollCourse = async (courseId, studentId) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
 
 	const course = await Course.findOne({ _id: courseId, is_deleted: false });
     if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	const existingEnrollment = await Enrollment.findOne({ user_id: studentId, course_id: courseId });
 	if (existingEnrollment) {
@@ -25,6 +28,17 @@ export const enrollCourse = async (courseId, studentId) => {
 		status,
 		approved_at: status === "active" ? new Date() : null,
 	});
+	const courseStillAvailable = await Course.findOne({ _id: courseId, is_deleted: false });
+	if (!courseStillAvailable) {
+		await Enrollment.deleteOne({ _id: enrollment._id });
+		throw new Error("COURSE_NOT_FOUND");
+	}
+	try {
+		await requireActiveCourseCreator(courseStillAvailable);
+	} catch (error) {
+		await Enrollment.deleteOne({ _id: enrollment._id });
+		throw error;
+	}
 
 	if (status === "pending") {
 		await createNotificationBestEffort({
@@ -56,6 +70,14 @@ export const unenrollCourse = async (courseId, studentId) => {
 	const enrollment = await Enrollment.findOne({ user_id: studentId, course_id: courseId });
     if (!enrollment) throw new Error("ENROLLMENT_NOT_FOUND");
 
+	const activeAttempt = await QuizAttempt.exists({
+		user_id: studentId,
+		course_id: courseId,
+		status: "in_progress",
+		expires_at: { $gt: new Date() },
+	});
+	if (activeAttempt) throw new Error("ACTIVE_QUIZ_ATTEMPT_EXISTS");
+
 	await enrollment.deleteOne();
     return { message: "Unenrolled from course successfully" };
 };
@@ -68,12 +90,15 @@ export const getMyCourses = async (studentId) => {
 			match: { is_deleted: false },
 			populate: {
 				path: "created_by",
-				select: "full_name role",
+				match: { role: "tutor", account_status: "active" },
+				select: "full_name role account_status",
 			},
 		})
 		.sort({ requested_at: -1 });
 
-	return enrollments.filter( (enrollment) => enrollment.course_id !== null );
+	return enrollments.filter(
+		(enrollment) => enrollment.course_id !== null && enrollment.course_id.created_by !== null,
+	);
 };
 
 
@@ -110,15 +135,19 @@ export const approveEnrollment = async (courseId, enrollmentId, userId, userRole
 		throw new Error("FORBIDDEN_COURSE_ACTION");
 	}
 
-	const enrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId });
-	if (!enrollment) throw new Error("ENROLLMENT_NOT_FOUND");
+	const enrollment = await Enrollment.findOneAndUpdate(
+		{ _id: enrollmentId, course_id: courseId, status: "pending" },
+		{ $set: { status: "active", approved_at: new Date() } },
+		{ new: true, runValidators: true },
+	);
+	if (!enrollment) {
+		const currentEnrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId })
+			.select("status");
+		if (!currentEnrollment) throw new Error("ENROLLMENT_NOT_FOUND");
+		if (currentEnrollment.status === "active") throw new Error("ENROLLMENT_ALREADY_ACTIVE");
+		throw new Error("ENROLLMENT_STATE_CHANGED");
+	}
 
-	if (enrollment.status === "active") throw new Error("ENROLLMENT_ALREADY_ACTIVE");
-
-	enrollment.status = "active";
-	enrollment.approved_at = new Date();
-
-	await enrollment.save();
 	await enrollment.populate("user_id", "full_name email role");
 
 	await createNotificationBestEffort({
@@ -145,13 +174,20 @@ export const rejectEnrollment = async (courseId, enrollmentId, userId, userRole)
 		throw new Error("FORBIDDEN_COURSE_ACTION");
 	}
 
-	const enrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId });
-    if (!enrollment) throw new Error("ENROLLMENT_NOT_FOUND");
-
-	if (enrollment.status === "active") throw new Error("CANNOT_REJECT_ACTIVE_ENROLLMENT");
+	const enrollment = await Enrollment.findOneAndDelete({
+		_id: enrollmentId,
+		course_id: courseId,
+		status: "pending",
+	});
+	if (!enrollment) {
+		const currentEnrollment = await Enrollment.findOne({ _id: enrollmentId, course_id: courseId })
+			.select("status");
+		if (!currentEnrollment) throw new Error("ENROLLMENT_NOT_FOUND");
+		if (currentEnrollment.status === "active") throw new Error("CANNOT_REJECT_ACTIVE_ENROLLMENT");
+		throw new Error("ENROLLMENT_STATE_CHANGED");
+	}
 
 	const studentId = enrollment.user_id;
-	await enrollment.deleteOne();
 
 	await createNotificationBestEffort({
 		recipient_id: studentId,

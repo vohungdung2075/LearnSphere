@@ -3,6 +3,7 @@ import Course from "../models/Course.model.js";
 import CourseDiscussion from "../models/CourseDiscussion.model.js";
 import Enrollment from "../models/Enrollment.model.js";
 import { createNotificationBestEffort } from "./notification.service.js";
+import { requireActiveCourseCreator } from "./course-availability.service.js";
 
 const verifyDiscussionAccess = async (courseId, userId, userRole) => {
 	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
@@ -19,6 +20,7 @@ const verifyDiscussionAccess = async (courseId, userId, userRole) => {
 	}
 
 	if (userRole === "student") {
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({
 			user_id: userId,
 			course_id: course._id,

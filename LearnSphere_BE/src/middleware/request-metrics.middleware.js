@@ -1,4 +1,5 @@
 import RequestMetric from "../models/RequestMetric.model.js";
+import RequestMetricUserDay from "../models/RequestMetricUserDay.model.js";
 
 const getUtcDateKey = (date = new Date()) => date.toISOString().slice(0, 10);
 
@@ -11,18 +12,25 @@ const persistMetric = async ({ date, durationMs, failed, userId }) => {
 		},
 	};
 
-	if (userId) {
-		update.$addToSet = { unique_user_ids: userId };
-	}
-
 	try {
-		await RequestMetric.updateOne({ date }, update, { upsert: true });
-	} catch (error) {
-		if (error?.code === 11000) {
+		try {
+			await RequestMetric.updateOne({ date }, update, { upsert: true });
+		} catch (error) {
+			if (error?.code !== 11000) throw error;
 			await RequestMetric.updateOne({ date }, update);
-			return;
 		}
 
+		if (userId) try {
+			await RequestMetricUserDay.updateOne(
+				{ date, user_id: userId },
+				{ $setOnInsert: { date, user_id: userId } },
+				{ upsert: true },
+			);
+		} catch (error) {
+			// A concurrent first request may win the unique (date, user) insert.
+			if (error?.code !== 11000) throw error;
+		}
+	} catch (error) {
 		console.error("Request metric persistence error:", error);
 	}
 };

@@ -36,7 +36,7 @@ IAM principal của backend cần thêm:
     "s3:DeleteObject",
     "s3:AbortMultipartUpload"
   ],
-  "Resource": "arn:aws:s3:::ai-learning-platform-vhd/courses/*"
+  "Resource": "arn:aws:s3:::learnsphere-media-<UNIQUE_SUFFIX>/courses/*"
 }
 ```
 

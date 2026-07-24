@@ -66,6 +66,7 @@ export const handleDeleteQuiz = async (req, res) => {
 		if (error.message === "QUIZ_NOT_FOUND" || error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Resource not found" });
 		if (error.message === "FORBIDDEN_QUIZ_ACTION") return res.status(403).json({ message: "Forbidden - Action denied" });
 		if (error.message === "QUIZ_HAS_ACTIVE_ATTEMPTS") return res.status(409).json({ message: "Quiz cannot be modified while students are taking it" });
+		if (error.message === "QUIZ_DELETE_IN_PROGRESS") return res.status(409).json({ message: "Quiz deletion is already in progress" });
 
 		return res.status(500).json({ message: "Internal server error" });
 	}
@@ -203,7 +204,7 @@ export const handleGetAttemptById = async (req, res) => {
 		return res.status(200).json(attempt);
 	} catch (error) {
 		if (error.message === "INVALID_ATTEMPT_ID") return res.status(400).json({ message: "Invalid attempt ID format" });
-		if (error.message === "ATTEMPT_NOT_FOUND") return res.status(404).json({ message: "Quiz attempt history not found" });
+		if (error.message === "ATTEMPT_NOT_FOUND" || error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Quiz attempt history not found" });
 		if (error.message === "ATTEMPT_ACCESS_DENIED") return res.status(403).json({ message: "Forbidden - You do not have permission to view this attempt details" });
         if (error.message === "ACTIVE_ENROLLMENT_REQUIRED") return res.status(403).json({ message: "Forbidden - Active enrollment required to view attempt history" });
 

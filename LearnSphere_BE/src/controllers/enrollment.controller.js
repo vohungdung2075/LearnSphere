@@ -31,6 +31,7 @@ export const handleUnenrollCourse = async (req, res) => {
 	} catch (error) {
 		if (error.message === "INVALID_COURSE_ID") return res.status(400).json({ message: "Invalid course ID format" });
 		if (error.message === "ENROLLMENT_NOT_FOUND") return res.status(404).json({ message: "Enrollment not found" });
+		if (error.message === "ACTIVE_QUIZ_ATTEMPT_EXISTS") return res.status(409).json({ message: "Finish or wait for the active quiz attempt to expire before unenrolling" });
 
 		console.error("Unenroll course error:", error);
 		return res.status(500).json({ message: "Internal server error" });
@@ -88,6 +89,7 @@ export const handleApproveEnrollment = async (req, res) => {
         if (error.message === "ENROLLMENT_NOT_FOUND") return res.status(404).json({ message: "Enrollment request not found" });
         if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "You don't have permission to approve this enrollment" });
         if (error.message === "ENROLLMENT_ALREADY_ACTIVE") return res.status(409).json({ message: "Enrollment is already active" });
+        if (error.message === "ENROLLMENT_STATE_CHANGED") return res.status(409).json({ message: "Enrollment state changed; refresh and try again" });
 
 		console.error("Approve enrollment error:", error);
 		return res.status(500).json({ message: "Internal server error" });
@@ -112,6 +114,7 @@ export const handleRejectEnrollment = async (req, res) => {
         if (error.message === "ENROLLMENT_NOT_FOUND") return res.status(404).json({ message: "Enrollment request not found" });
         if (error.message === "FORBIDDEN_COURSE_ACTION") return res.status(403).json({ message: "You don't have permission to reject this enrollment" });
         if (error.message === "CANNOT_REJECT_ACTIVE_ENROLLMENT") return res.status(409).json({ message: "Cannot reject an already active enrollment" });
+        if (error.message === "ENROLLMENT_STATE_CHANGED") return res.status(409).json({ message: "Enrollment state changed; refresh and try again" });
 
 		console.error("Reject enrollment error:", error);
 		return res.status(500).json({ message: "Internal server error" });

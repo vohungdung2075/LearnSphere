@@ -290,14 +290,10 @@ export type NotificationsResponse = {
 };
 
 type AuthResponse = {
-  access_token: string;
-  token_type: string;
   user: User;
 };
 
 type RegisterResponse = {
-  access_token: string | null;
-  token_type: string | null;
   user: User;
   message: string;
 };
@@ -305,6 +301,7 @@ type RegisterResponse = {
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   auth?: boolean;
+  timeoutMs?: number;
 };
 
 export class ApiError extends Error {
@@ -330,6 +327,8 @@ export function getAIErrorMessage(error: unknown, fallback: string) {
   if (error.code === 'AI_THROTTLED') return 'Dịch vụ AI đã hết quota hoặc đang giới hạn lưu lượng. Vui lòng thử lại sau.';
   if (error.code === 'AI_DOCUMENT_NOT_INDEXED') return 'Backend không OCR được document của bài học. Hãy xem trạng thái học liệu và kiểm tra PDF có bị lỗi hoặc đặt mật khẩu hay không.';
   if (error.code === 'AI_SUMMARY_NOT_READY') return 'Giảng viên chưa tạo bản tóm tắt cho tài liệu này.';
+  if (error.code === 'AI_SUMMARY_IN_PROGRESS') return 'Một yêu cầu tóm tắt tài liệu này đang được xử lý. Vui lòng chờ hoàn tất.';
+  if (error.code === 'AI_SUMMARY_SOURCE_CHANGED') return 'Document đã thay đổi trong lúc tạo tóm tắt. Hãy chạy lại với file mới.';
   if (error.code === 'AI_INDEX_IN_PROGRESS') return 'AI đang xử lý file bài học. Vui lòng đợi hoàn tất rồi thử lại.';
   if (error.code === 'AI_INDEX_SOURCE_CHANGED') return 'Document đã thay đổi trong lúc AI xử lý. Hãy chạy phân tích lại với file mới.';
   if (error.code === 'AI_FILES_NOT_INDEXED') return 'Giảng viên cần tóm tắt học liệu bằng AI ít nhất một lần trước khi học viên sử dụng.';
@@ -337,17 +336,16 @@ export function getAIErrorMessage(error: unknown, fallback: string) {
   if (error.code === 'AI_RATE_LIMITED') {
     return `Bạn đã gửi quá nhiều yêu cầu AI. Vui lòng thử lại sau ${error.retryAfterSeconds ?? 60} giây.`;
   }
+  if (error.code === 'AI_RATE_LIMIT_UNAVAILABLE') {
+    return 'Hệ thống bảo vệ chi phí AI đang tạm thời không khả dụng. Vui lòng thử lại sau.';
+  }
 
   return error.message || fallback;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-const TOKEN_KEY = 'learnsphere_access_token';
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const USER_KEY = 'learnsphere_user';
-
-export function getToken() {
-  return window.localStorage.getItem(TOKEN_KEY);
-}
 
 export function getStoredUser(): User | null {
   const value = window.localStorage.getItem(USER_KEY);
@@ -360,41 +358,55 @@ export function getStoredUser(): User | null {
   }
 }
 
-export function saveSession(auth: AuthResponse) {
-  window.localStorage.setItem(TOKEN_KEY, auth.access_token);
+export function saveSession(auth: Pick<AuthResponse, 'user'>) {
   window.localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
 }
 
 export function clearSession() {
-  window.localStorage.removeItem(TOKEN_KEY);
+  // Remove the legacy JS-readable token after migrating to HttpOnly cookies.
+  window.localStorage.removeItem('learnsphere_access_token');
   window.localStorage.removeItem(USER_KEY);
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { auth = true, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal: externalSignal, ...fetchOptions } = options;
   const headers = new Headers(options.headers);
   const hasBody = options.body !== undefined;
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+  externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  const timeoutId = timeoutMs > 0
+    ? window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
+    : undefined;
 
   if (hasBody && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
-  if (options.auth !== false) {
-    const token = getToken();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      headers,
+      credentials: 'include',
+      signal: controller.signal,
+      body: hasBody && !(options.body instanceof FormData) ? JSON.stringify(options.body) : (options.body as BodyInit | undefined),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (externalSignal?.aborted) throw error;
+      throw new ApiError('Yêu cầu mất quá nhiều thời gian. Vui lòng kiểm tra kết nối và thử lại.', 408, 'CLIENT_TIMEOUT');
     }
+    throw new ApiError('Không thể kết nối tới máy chủ. Vui lòng kiểm tra mạng và thử lại.', 0, 'NETWORK_ERROR');
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
   }
-
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-    body: hasBody && !(options.body instanceof FormData) ? JSON.stringify(options.body) : (options.body as BodyInit | undefined),
-  });
 
   const contentType = response.headers.get('content-type') ?? '';
   const data = contentType.includes('application/json') ? await response.json() : null;
 
-  if (response.status === 401 && options.auth !== false) {
+  if (response.status === 401 && auth) {
     clearSession();
     window.dispatchEvent(new Event('learnsphere:unauthorized'));
   }
@@ -417,6 +429,13 @@ export const api = {
       method: 'POST',
       auth: false,
       body: { email, password },
+    });
+  },
+
+  logout() {
+    return request<{ message: string }>('/auth/logout', {
+      method: 'POST',
+      auth: false,
     });
   },
 
@@ -544,6 +563,7 @@ export const api = {
   indexLessonForAI(lessonId: string) {
     return request<LessonAIIndexResult>(`/lessons/${lessonId}/ai-index`, {
       method: 'POST',
+      timeoutMs: 10 * 60_000,
     });
   },
 
@@ -567,6 +587,7 @@ export const api = {
     return request<AIChatResponse>('/ai/chat', {
       method: 'POST',
       body,
+      timeoutMs: 3 * 60_000,
     });
   },
 
@@ -574,6 +595,7 @@ export const api = {
     return request<AISummaryResponse>(`/ai/summarize-lesson/${lessonId}`, {
       method: 'POST',
       body: { force_regenerate: forceRegenerate },
+      timeoutMs: 5 * 60_000,
     });
   },
 
@@ -581,6 +603,7 @@ export const api = {
     return request<AIGeneratedQuizResponse>('/ai/generate-quiz', {
       method: 'POST',
       body,
+      timeoutMs: 5 * 60_000,
     });
   },
 
@@ -731,6 +754,7 @@ export const api = {
     return new Promise<boolean>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', uploadUrl);
+      xhr.timeout = 5 * 60_000;
       xhr.setRequestHeader('Content-Type', file.type);
 
       xhr.upload.onprogress = (event) => {
@@ -740,6 +764,9 @@ export const api = {
 
       xhr.onerror = () => {
         reject(new Error('Không thể kết nối tới S3. Hãy kiểm tra CORS của bucket và kết nối mạng.'));
+      };
+      xhr.ontimeout = () => {
+        reject(new Error('Upload lên S3 hết thời gian chờ. Vui lòng kiểm tra mạng và tải lại.'));
       };
 
       xhr.onload = () => {
@@ -785,12 +812,14 @@ export const api = {
       return new Promise<string>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open('PUT', part.upload_url);
+        xhr.timeout = 5 * 60_000;
         xhr.upload.onprogress = (event) => {
           if (!event.lengthComputable) return;
           uploadedByPart[partIndex] = event.loaded;
           reportProgress();
         };
         xhr.onerror = () => reject(new Error(`Mất kết nối khi tải phần ${part.part_number}.`));
+        xhr.ontimeout = () => reject(new Error(`Tải phần ${part.part_number} quá thời gian chờ.`));
         xhr.onload = () => {
           if (xhr.status < 200 || xhr.status >= 300) {
             reject(new Error(`Upload phần ${part.part_number} thất bại (${xhr.status}).`));

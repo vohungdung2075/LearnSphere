@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from '
 import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
-import { api, clearSession, getStoredUser, getToken, saveSession, type User } from '../services/api';
+import { api, clearSession, getStoredUser, saveSession, type User } from '../services/api';
 
 const fallbackAvatarSrc =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuAK3DeXFfcU7eoLcYm0J-P0geFc_1SNB3sOpbZdSgXNGYGNkWLvpydHgoO3teNd6SCKCfYzJzNrs1AB7P8Pu74X-3istluRsHM1oPvbEs2nLPM2cHWOxHmwakxXKAZY99rZGG-p9kypULkAvH9bkTxwS1EgNluYqYhNlGpql2gZkqIWaOYk5FWOQvYjhFI2VJivahYgEOwamgFB5MZtSI9a-fovv-ztHAlZ1TjPwNnEgpB773mBUptA6A';
@@ -62,8 +62,7 @@ export function ProfilePage() {
       .then(async (profile) => {
         setUser(profile);
         setFullName(profile.full_name);
-        const token = getToken();
-        if (token) saveSession({ access_token: token, token_type: 'bearer', user: profile });
+        saveSession({ user: profile });
         await loadAvatar(profile);
       })
       .catch((err) => {
@@ -134,8 +133,7 @@ export function ProfilePage() {
         ...(avatarKey ? { avatar_key: avatarKey } : {}),
       });
 
-      const token = getToken();
-      if (token) saveSession({ access_token: token, token_type: 'bearer', user: result.user });
+      saveSession({ user: result.user });
       setUser(result.user);
       setFullName(result.user.full_name);
       setAvatarFile(null);
@@ -157,8 +155,7 @@ export function ProfilePage() {
 
     try {
       const result = await api.updateProfile({ avatar_key: null });
-      const token = getToken();
-      if (token) saveSession({ access_token: token, token_type: 'bearer', user: result.user });
+      saveSession({ user: result.user });
       setUser(result.user);
       setAvatarFile(null);
       setAvatarPreview('');
@@ -172,7 +169,8 @@ export function ProfilePage() {
     }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await api.logout().catch(() => {});
     clearSession();
     window.location.assign('/login');
   }

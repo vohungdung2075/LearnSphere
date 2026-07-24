@@ -16,6 +16,12 @@ const S3CleanupTaskSchema = new mongoose.Schema(
 			default: "",
 			trim: true,
 		},
+		context: {
+			type: String,
+			default: "unspecified",
+			trim: true,
+			maxlength: 200,
+		},
 		status: {
 			type: String,
 			enum: ["pending", "processing", "failed"],

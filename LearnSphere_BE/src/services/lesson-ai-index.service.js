@@ -46,6 +46,23 @@ const runBeforeDeadline = async (operation, deadline) => {
 	}
 };
 
+const settleCleanupWithin = async (operation, timeoutMs, label) => {
+	let timer;
+	try {
+		await Promise.race([
+			operation,
+			new Promise((resolve) => {
+				timer = setTimeout(resolve, timeoutMs);
+				timer.unref?.();
+			}),
+		]);
+	} catch (error) {
+		console.error(`${label} failed:`, error.message);
+	} finally {
+		clearTimeout(timer);
+	}
+};
+
 const extractScannedPdfText = async (parser, totalPages) => {
 	const maxPages = readPositiveInteger(process.env.AI_PDF_OCR_MAX_PAGES, 12);
 	const desiredWidth = readPositiveInteger(process.env.AI_PDF_OCR_IMAGE_WIDTH, 1400);
@@ -98,7 +115,7 @@ const extractScannedPdfText = async (parser, totalPages) => {
 		return parts.join("\n\n");
 	} finally {
 		try {
-			if (worker) await worker.terminate();
+			if (worker) await settleCleanupWithin(worker.terminate(), 5_000, "OCR worker termination");
 		} finally {
 			activeOCRJobs -= 1;
 		}
@@ -126,7 +143,7 @@ const extractDocumentText = async (fileKey) => {
 				}
 			}
 		} finally {
-			await parser.destroy();
+			await settleCleanupWithin(parser.destroy(), 5_000, "PDF parser cleanup");
 		}
 	} else if (extension === ".docx") {
 		const result = await mammoth.extractRawText({ buffer });

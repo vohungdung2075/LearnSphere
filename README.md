@@ -12,7 +12,7 @@ LearnSphere/
 
 ## Yêu cầu
 
-- Node.js 18+
+- Node.js 20.19+
 - npm
 - MongoDB local hoặc MongoDB Atlas
 - AWS S3 bucket nếu dùng chức năng upload file
@@ -22,6 +22,15 @@ LearnSphere/
 ```bash
 cd LearnSphere_BE
 npm install
+```
+
+Sao chép `.env.example` thành `.env`; khi chạy local đặt:
+
+```env
+NODE_ENV=development
+FRONTEND_URL=http://localhost:5173
+TRUST_PROXY=false
+MONGODB_REQUIRE_TRANSACTIONS=false
 ```
 
 Chạy server:
@@ -43,10 +52,10 @@ cd LearnSphere_FE
 npm install
 ```
 
-Tạo file `.env` trong thư mục `LearnSphere_FE`:
+Vite đã proxy `/api` sang backend local. Có thể bỏ trống file `.env` frontend hoặc đặt:
 
 ```env
-VITE_API_BASE_URL=http://localhost:5000/api
+VITE_API_BASE_URL=/api
 ```
 
 Chạy ứng dụng:

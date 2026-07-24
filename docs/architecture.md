@@ -14,12 +14,12 @@ LearnSphere là nền tảng học tập trực tuyến được triển khai tr
                     │                   Region: ap-southeast-1                       │
                     │                                                               │
  GitHub Actions ───►│──► [ECR] learnsphere-be ──────────────────────────────────►  │
- (CI/CD push)       │         (Docker Registry)          ▼                          │
-                    │                              [EC2 t3.micro]                   │
+ (OIDC + SSM)       │         (Docker Registry)          ▼                          │
+                    │                              [EC2 + Docker]                   │
                     │                           Amazon Linux 2023                   │
- User (Browser) ───►│──► CloudFront (FE) ──► [S3] learnsphere-fe-static            │
+ User (Browser) ───►│──► CloudFront ────────► [S3] learnsphere-fe-<suffix>          │
                     │                                                               │
- User (API call) ──►│──► Internet Gateway ──► [EC2] :5000 ──► [S3] Media Bucket    │
+                    │          └── /api/* ───► [EC2] :5000 ──► [S3] Media Bucket    │
                     │                              │                                │
                     │                              │◄── IAM Role (S3 + ECR access)  │
                     │                              │                                │
@@ -29,7 +29,7 @@ LearnSphere là nền tảng học tập trực tuyến được triển khai tr
                     └───────────────────────────────────────────────────────────────┘
                                   │                      │
                            [MongoDB Atlas]          [OpenAI API]
-                          (External Cloud DB)      (External API)
+                           (External Cloud DB)     [Groq / Bedrock]
 ```
 
 ---
@@ -40,40 +40,37 @@ LearnSphere là nền tảng học tập trực tuyến được triển khai tr
 - **Repository**: `learnsphere-be`
 - **Region**: `ap-southeast-1`
 - **Mục đích**: Lưu trữ Docker image của Backend Node.js
-- **Tích hợp**: GitHub Actions build và push image mỗi khi có commit vào `main`
+- **Tích hợp**: GitHub Actions build và push image khi chạy workflow deploy
 - **Scan on push**: Bật — tự động quét lỗ hổng bảo mật
 
 ### 2. Amazon EC2
-- **Instance type**: `t3.micro` (1 vCPU, 1 GB RAM)
+- **Instance type**: chọn theo tải thực tế; OCR nên có ít nhất 2 GB RAM
 - **OS**: Amazon Linux 2023
 - **Subnet**: Public subnet
-- **IAM Role**: `learnsphere-ec2-role` — quyền truy cập S3 và ECR
+- **IAM Role**: `LearnSphereEc2Role` — quyền SSM, S3, ECR, CloudWatch và Bedrock
 - **Chạy**: Docker container từ ECR image
 - **Port**: `5000` (Express.js API)
 - **Graceful shutdown**: Xử lý `SIGTERM` để đóng MongoDB connection trước khi tắt
 
 ### 3. Amazon S3
-#### Bucket 1: Media & Assets (`ai-learning-platform-vhd`)
+#### Bucket 1: Media & Assets (`learnsphere-media-<suffix>`)
 - Video bài học (`.mp4`, `.webm`) — max 500 MB/file
 - Tài liệu bài học (`.pdf`, `.docx`) — max 20 MB/file
 - Thumbnail khóa học (`.jpg`, `.png`, `.webp`) — max 5 MB/file
 - Truy cập qua **Presigned URL** (thời hạn: upload 5 phút, download 15 phút)
 
-#### Bucket 2: Frontend Static (`learnsphere-fe-static`)
+#### Bucket 2: Frontend Static (`learnsphere-fe-<suffix>`)
 - Static files sau khi build React/Vite
-- Bật **Static Website Hosting**
-- Phân phối qua **CloudFront**
+- Giữ private, bật **Block all public access**
+- Phân phối qua **CloudFront OAC**
 
 ### 4. Amazon CloudFront
-#### Distribution 1 — Frontend
-- **Origin**: S3 `learnsphere-fe-static`
+#### Distribution — Frontend và API
+- **Default origin**: S3 `learnsphere-fe-<suffix>`
 - **Use case**: Phân phối React SPA đến người dùng
 - **Cache**: Assets lâu dài, `index.html` không cache
-- **Custom error**: 403/404 → `index.html` (hỗ trợ React Router)
-
-#### Distribution 2 — Media (tùy chọn)
-- **Origin**: S3 `ai-learning-platform-vhd`
-- **Use case**: CDN cho video/tài liệu, giảm latency và chi phí bandwidth
+- **API behavior**: `/api/*` chuyển đến EC2 và tắt cache
+- **SPA routing**: CloudFront Function chỉ gắn default behavior; không đổi lỗi API thành HTTP 200
 
 ### 5. MongoDB Atlas (External)
 - **Tier**: M0 Free / M2 Shared
@@ -82,8 +79,8 @@ LearnSphere là nền tảng học tập trực tuyến được triển khai tr
 - **Lý do không dùng RDS**: Project dùng Mongoose ODM — document-oriented database
 
 ### 6. GitHub Actions (CI/CD)
-- **Trigger**: Push lên branch `main`
-- **Job 1 — Backend**: Build Docker → Push ECR → SSH EC2 → Restart container
+- **Trigger ban đầu**: Chạy thủ công bằng `workflow_dispatch`
+- **Job 1 — Backend**: Build Docker → Push ECR → Systems Manager deploy EC2
 - **Job 2 — Frontend**: npm build → S3 sync → CloudFront invalidation
 - **Secrets**: Lưu trong GitHub Repository Secrets (không hardcode)
 

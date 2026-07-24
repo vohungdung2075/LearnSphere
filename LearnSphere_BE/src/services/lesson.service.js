@@ -7,6 +7,7 @@ import { deleteS3ObjectsBestEffort, validateStoredFileKey } from "./file.service
 import { processS3CleanupTask, queueS3ObjectsCleanup } from "./s3-cleanup-task.service.js";
 import { recoverStaleAIIndexes } from "./lesson-ai-index.service.js";
 import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
+import { requireActiveCourseCreator } from "./course-availability.service.js";
 
 const verifyAccessPermission = async (course, userId, userRole) => {
 	if (userRole === "admin") return;
@@ -18,6 +19,7 @@ const verifyAccessPermission = async (course, userId, userRole) => {
 	}
 
 	if (userRole === "student") {
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({
 			user_id: userId,
 			course_id: course._id,
@@ -194,6 +196,10 @@ export const updateLesson = async (lessonId, { title, content, video_key, docume
 		lesson.ai_summary_input_tokens = 0;
 		lesson.ai_summary_output_tokens = 0;
 		lesson.ai_summary_generated_at = null;
+		lesson.ai_summary_status = "not_generated";
+		lesson.ai_summary_started_at = null;
+		lesson.ai_summary_run_id = "";
+		lesson.ai_summary_error = "";
 	}
 	if (order_index) lesson.order_index = order_index;
 

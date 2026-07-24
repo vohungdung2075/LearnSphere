@@ -4,6 +4,7 @@ import Enrollment from "../models/Enrollment.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
 import { deleteS3ObjectsBestEffort, validateStoredFileKey } from "./file.service.js";
 import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
+import { isCourseCreatorActive, requireActiveCourseCreator } from "./course-availability.service.js";
 
 export const createCourse = async ( { title, description, enrollment_type }, creatorId ) => {
 	const allowedEnrollmentTypes = ["open", "approval_required"];
@@ -24,18 +25,22 @@ export const createCourse = async ( { title, description, enrollment_type }, cre
 
 export const getAllCourses = async () => {
 	const courses = await Course.find({ is_deleted: false })
-		.populate("created_by", "full_name role") 
+		.populate("created_by", "full_name role account_status")
 		.sort({ createdAt: -1 }); 
+	const availableCourses = [];
+	for (const course of courses) {
+		if (await isCourseCreatorActive(course)) availableCourses.push(course);
+	}
 
 	const enrollmentCounts = await Enrollment.aggregate([
-		{ $match: { status: "active", course_id: { $in: courses.map((course) => course._id) } } },
+		{ $match: { status: "active", course_id: { $in: availableCourses.map((course) => course._id) } } },
 		{ $group: { _id: "$course_id", enrollment_count: { $sum: 1 } } },
 	]);
 	const enrollmentCountByCourseId = new Map(
 		enrollmentCounts.map((item) => [item._id.toString(), item.enrollment_count]),
 	);
 
-	return courses.map((course) => ({
+	return availableCourses.map((course) => ({
 		...course.toObject(),
 		enrollment_count: enrollmentCountByCourseId.get(course._id.toString()) ?? 0,
 	}));
@@ -49,6 +54,7 @@ export const getCourseById = async (courseId) => {
 		.populate("created_by", "full_name role");
 
 	if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	return course;
 };

@@ -20,6 +20,8 @@ const clientErrors = new Map([
 	["LESSON_CONTENT_EMPTY", [409, "Lesson has no text or indexed file content for AI processing"]],
 	["AI_DOCUMENT_NOT_INDEXED", [422, "The attached document could not be read for AI processing"]],
 	["AI_SUMMARY_NOT_READY", [409, "The teacher has not generated a summary for this document yet"]],
+	["AI_SUMMARY_IN_PROGRESS", [409, "A summary is already being generated for this document"]],
+	["AI_SUMMARY_SOURCE_CHANGED", [409, "The lesson document changed while the summary was being generated"]],
 	["AI_INDEX_IN_PROGRESS", [409, "Lesson files are already being processed for AI"]],
 	["AI_FILES_NOT_INDEXED", [409, "The teacher must process this lesson's files before students can use them with AI"]],
 	["ACTIVE_ENROLLMENT_REQUIRED", [403, "Active enrollment in this course required"]],
@@ -45,6 +47,7 @@ const sendAIError = (res, error, operation) => {
 				provider_status: error.cause?.status,
 				provider_error: error.cause?.message,
 				provider_cause: error.cause?.cause?.code || error.cause?.cause?.name,
+				fallback_error: error.fallback_error,
 			});
 		}
 		return res.status(mapped[0]).json({ message: mapped[1], code: error.message });

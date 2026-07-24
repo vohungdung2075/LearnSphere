@@ -96,6 +96,26 @@ const LessonSchema = new mongoose.Schema(
 			default: null,
 			select: false,
 		},
+		ai_summary_status: {
+			type: String,
+			enum: ["not_generated", "processing", "ready", "failed"],
+			default: "not_generated",
+		},
+		ai_summary_started_at: {
+			type: Date,
+			default: null,
+			select: false,
+		},
+		ai_summary_run_id: {
+			type: String,
+			default: "",
+			select: false,
+		},
+		ai_summary_error: {
+			type: String,
+			default: "",
+			select: false,
+		},
 		order_index: {
 			type: Number,
 			required: true,
