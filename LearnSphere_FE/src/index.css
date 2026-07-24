@@ -154,23 +154,41 @@ pre,
   z-index: 2147483646 !important;
 }
 
-@keyframes courseHeroFade {
+@keyframes courseHeroContentReveal {
   from {
-    opacity: 0.55;
-    transform: scale(1.015);
+    opacity: 0;
+    transform: translateX(18px);
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: translateX(0);
   }
 }
 
-.course-hero-slide {
-  animation: courseHeroFade 500ms ease-out;
+.course-hero-backdrop {
+  opacity: 0;
+  transform: scale(1.035);
+  transition:
+    opacity 900ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 1200ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+
+.course-hero-backdrop.is-active {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.course-hero-content {
+  animation: courseHeroContentReveal 650ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .course-hero-slide {
+  .course-hero-backdrop {
+    transition: none;
+  }
+
+  .course-hero-content {
     animation: none;
   }
 }

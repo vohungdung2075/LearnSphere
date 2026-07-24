@@ -287,19 +287,30 @@ export function CourseCatalogPage() {
     [courses],
   );
   const popularCourse = popularCourses[popularCourseIndex];
-  const popularImage = popularCourse ? thumbnailUrls[popularCourse._id] || heroImage : heroImage;
   const activeCourseCount = Object.values(enrollmentStatusByCourseId).filter((status) => status === 'active').length;
 
   useEffect(() => {
     setPopularCourseIndex((current) => (current < popularCourses.length ? current : 0));
+  }, [popularCourses.length]);
 
+  useEffect(() => {
     if (popularCourses.length <= 1) return undefined;
-    const timer = window.setInterval(() => {
+    const timer = window.setTimeout(() => {
       setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
     }, 5000);
 
-    return () => window.clearInterval(timer);
-  }, [popularCourses.length]);
+    return () => window.clearTimeout(timer);
+  }, [popularCourseIndex, popularCourses.length]);
+
+  useEffect(() => {
+    popularCourses.forEach((course) => {
+      const imageUrl = thumbnailUrls[course._id];
+      if (imageUrl) {
+        const image = new Image();
+        image.src = imageUrl;
+      }
+    });
+  }, [popularCourses, thumbnailUrls]);
 
   function showPreviousPopularCourse() {
     setPopularCourseIndex((current) => (current - 1 + popularCourses.length) % popularCourses.length);
@@ -413,14 +424,25 @@ export function CourseCatalogPage() {
 
       <main className="w-full flex-grow pb-24 md:pl-64">
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8">
-          <section className="relative overflow-hidden rounded-xl border border-white/5 bg-[#242a37] shadow-card">
-            <div
-              key={popularCourse?._id ?? 'course-placeholder'}
-              className="course-hero-slide absolute inset-0 z-0 bg-cover bg-center"
-              style={{ backgroundImage: `url(${popularImage})` }}
-            />
+          <section className="relative min-h-[280px] overflow-hidden rounded-xl border border-white/5 bg-[#242a37] shadow-card md:min-h-[320px]">
+            {(popularCourses.length > 0 ? popularCourses : [null]).map((course, index) => {
+              const isActive = index === popularCourseIndex;
+              const imageUrl = course ? thumbnailUrls[course._id] || heroImage : heroImage;
+
+              return (
+                <div
+                  key={course?._id ?? 'course-placeholder'}
+                  className={`course-hero-backdrop absolute inset-0 z-0 bg-cover bg-center ${isActive ? 'is-active' : ''}`}
+                  style={{ backgroundImage: `url(${imageUrl})` }}
+                  aria-hidden={!isActive}
+                />
+              );
+            })}
             <div className="absolute inset-0 z-10 bg-[linear-gradient(90deg,#0d131f_0%,rgba(13,19,31,0.88)_42%,rgba(13,19,31,0.18)_100%)]" />
-            <div className="relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10">
+            <div
+              key={popularCourse?._id ?? 'course-placeholder-content'}
+              className="course-hero-content relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10"
+            >
               <span className="mb-4 inline-flex w-fit items-center gap-1 rounded-full border border-[#24dfba]/20 bg-[#24dfba]/10 px-3 py-1 font-mono text-[12px] font-bold text-[#24dfba]">
                 <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>star</span>
                 KHÓA HỌC PHỔ BIẾN

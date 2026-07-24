@@ -148,9 +148,32 @@ export const getMyCourses = async (studentId) => {
 		})
 		.sort({ requested_at: -1 });
 
-	return enrollments.filter(
+	const availableEnrollments = enrollments.filter(
 		(enrollment) => enrollment.course_id !== null && enrollment.course_id.created_by !== null,
 	);
+	const courseIds = availableEnrollments.map((enrollment) => enrollment.course_id._id);
+	const enrollmentCounts = courseIds.length > 0
+		? await Enrollment.aggregate([
+			{ $match: { status: "active", course_id: { $in: courseIds } } },
+			{ $group: { _id: "$course_id", enrollment_count: { $sum: 1 } } },
+		])
+		: [];
+	const enrollmentCountByCourseId = new Map(
+		enrollmentCounts.map((item) => [item._id.toString(), item.enrollment_count]),
+	);
+
+	return availableEnrollments.map((enrollment) => {
+		const enrollmentObject = enrollment.toObject();
+		const courseId = enrollment.course_id._id.toString();
+
+		return {
+			...enrollmentObject,
+			course_id: {
+				...enrollmentObject.course_id,
+				enrollment_count: enrollmentCountByCourseId.get(courseId) ?? 0,
+			},
+		};
+	});
 };
 
 
