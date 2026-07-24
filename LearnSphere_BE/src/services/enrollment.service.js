@@ -17,6 +17,12 @@ export const enrollCourse = async (courseId, studentId) => {
 		if (existingEnrollment.status === "active") {
 			throw new Error("ALREADY_ENROLLED");
 		}
+		if (course.enrollment_type === "open") {
+			existingEnrollment.status = "active";
+			existingEnrollment.approved_at = new Date();
+			await existingEnrollment.save();
+			return existingEnrollment;
+		}
         throw new Error("ENROLLMENT_ALREADY_PENDING");
 	}
 
@@ -84,6 +90,33 @@ export const unenrollCourse = async (courseId, studentId) => {
 
 
 export const getMyCourses = async (studentId) => {
+	const pendingCourseIds = await Enrollment.distinct("course_id", {
+		user_id: studentId,
+		status: "pending",
+	});
+	if (pendingCourseIds.length > 0) {
+		const openCourseIds = await Course.distinct("_id", {
+			_id: { $in: pendingCourseIds },
+			is_deleted: false,
+			enrollment_type: "open",
+		});
+		if (openCourseIds.length > 0) {
+			await Enrollment.updateMany(
+				{
+					user_id: studentId,
+					course_id: { $in: openCourseIds },
+					status: "pending",
+				},
+				{
+					$set: {
+						status: "active",
+						approved_at: new Date(),
+					},
+				},
+			);
+		}
+	}
+
 	const enrollments = await Enrollment.find({ user_id: studentId })
 		.populate({
 			path: "course_id",

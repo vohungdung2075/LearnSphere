@@ -283,7 +283,7 @@ export function CourseCatalogPage() {
             (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
             second._id.localeCompare(first._id),
         )
-        .slice(0, 4),
+        .slice(0, 5),
     [courses],
   );
   const popularCourse = popularCourses[popularCourseIndex];
@@ -296,7 +296,7 @@ export function CourseCatalogPage() {
     if (popularCourses.length <= 1) return undefined;
     const timer = window.setInterval(() => {
       setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
-    }, 6000);
+    }, 5000);
 
     return () => window.clearInterval(timer);
   }, [popularCourses.length]);

@@ -5,6 +5,7 @@ import QuizAttempt from "../models/QuizAttempt.model.js";
 import { deleteS3ObjectsBestEffort, validateStoredFileKey } from "./file.service.js";
 import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
 import { isCourseCreatorActive, requireActiveCourseCreator } from "./course-availability.service.js";
+import { createNotificationBestEffort } from "./notification.service.js";
 
 export const createCourse = async ( { title, description, enrollment_type }, creatorId ) => {
 	const allowedEnrollmentTypes = ["open", "approval_required"];
@@ -126,7 +127,52 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
 			`course:${course._id}:thumbnail:replaced`,
 		);
 	}
-	return updatedCourse;
+
+	let activatedEnrollmentCount = 0;
+	if (course.enrollment_type === "open") {
+		const pendingEnrollments = await Enrollment.find({
+			course_id: course._id,
+			status: "pending",
+		})
+			.select("_id user_id")
+			.lean();
+
+		if (pendingEnrollments.length > 0) {
+			const approvedAt = new Date();
+			const activationResult = await Enrollment.updateMany(
+				{
+					_id: { $in: pendingEnrollments.map((enrollment) => enrollment._id) },
+					status: "pending",
+				},
+				{
+					$set: {
+						status: "active",
+						approved_at: approvedAt,
+					},
+				},
+			);
+			activatedEnrollmentCount = activationResult.modifiedCount ?? 0;
+
+			await Promise.all(
+				pendingEnrollments.map((enrollment) =>
+					createNotificationBestEffort({
+						recipient_id: enrollment.user_id,
+						type: "enrollment",
+						title: "Yêu cầu đăng ký đã được chấp nhận",
+						message: `Khóa học "${course.title}" đã chuyển sang đăng ký mở. Bạn đã được ghi danh tự động.`,
+						link: `/course-detail?course_id=${course._id}`,
+						metadata: {
+							action: "start_learning",
+							course_id: course._id,
+							enrollment_id: enrollment._id,
+						},
+					}, `enrollment:${enrollment._id}:course-opened`),
+				),
+			);
+		}
+	}
+
+	return { course: updatedCourse, activatedEnrollmentCount };
 };
 
 

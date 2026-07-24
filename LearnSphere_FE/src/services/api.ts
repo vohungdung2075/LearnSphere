@@ -471,7 +471,7 @@ export const api = {
   },
 
   updateCourse(courseId: string, body: { title?: string; description?: string; thumbnail_key?: string; enrollment_type?: EnrollmentType }) {
-    return request<{ message: string; course: Course }>(`/courses/${courseId}`, {
+    return request<{ message: string; course: Course; activated_enrollment_count: number }>(`/courses/${courseId}`, {
       method: 'PUT',
       body,
     });

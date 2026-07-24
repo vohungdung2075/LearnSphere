@@ -53,13 +53,20 @@ export const handleUpdateCourse = async (req, res) => {
 	const { course_id } = req.params ?? {};
 	const { title, description, thumbnail_key, enrollment_type } = req.body ?? {};
 	try {
-		const updated = await updateCourse(
+		const result = await updateCourse(
 			course_id,
 			{ title, description, thumbnail_key, enrollment_type },
 			req.user._id, 
 			req.user.role
 		);
-		return res.status(200).json({ message: "Course updated successfully", course: updated });
+		const activatedCount = result.activatedEnrollmentCount;
+		return res.status(200).json({
+			message: activatedCount > 0
+				? `Cập nhật khóa học thành công. Đã tự động chấp nhận ${activatedCount} học viên đang chờ.`
+				: "Cập nhật khóa học thành công.",
+			course: result.course,
+			activated_enrollment_count: activatedCount,
+		});
 	} catch (error) {
 		if (error.message === "INVALID_COURSE_ID") return res.status(400).json({ message: "Invalid course ID format" }); 
 		if (error.message === "COURSE_NOT_FOUND") return res.status(404).json({ message: "Course not found" }); 
