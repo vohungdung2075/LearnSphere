@@ -257,6 +257,14 @@ export type SystemStats = {
   };
 };
 
+export type TutorDashboardStats = {
+  courses: number;
+  total_lessons: number;
+  total_quizzes: number;
+  pending_enrollments: number;
+  active_students: number;
+};
+
 export type NotificationItem = {
   _id: string;
   recipient_id: string;
@@ -924,6 +932,10 @@ export const api = {
 
   getSystemStats() {
     return request<SystemStats>('/stats');
+  },
+
+  getTutorDashboardStats() {
+    return request<TutorDashboardStats>('/stats/tutor-dashboard');
   },
 
   getNotifications(limit = 20) {

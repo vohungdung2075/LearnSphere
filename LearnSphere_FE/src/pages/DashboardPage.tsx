@@ -4,7 +4,14 @@ import { AppToast } from '../components/AppToast';
 import { SphereAIButton } from '../components/SphereAIButton';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { getRoleLabel, getRoleNav, type NavItem } from '../lib/roleAccess';
-import { api, getStoredUser, type CourseProgress, type Enrollment } from '../services/api';
+import {
+  api,
+  getStoredUser,
+  type CourseProgress,
+  type Enrollment,
+  type SystemStats,
+  type TutorDashboardStats,
+} from '../services/api';
 
 const avatarSrc =
   'https://lh3.googleusercontent.com/aida-public/AB6AXuAK3DeXFfcU7eoLcYm0J-P0geFc_1SNB3sOpbZdSgXNGYGNkWLvpydHgoO3teNd6SCKCfYzJzNrs1AB7P8Pu74X-3istluRsHM1oPvbEs2nLPM2cHWOxHmwakxXKAZY99rZGG-p9kypULkAvH9bkTxwS1EgNluYqYhNlGpql2gZkqIWaOYk5FWOQvYjhFI2VJivahYgEOwamgFB5MZtSI9a-fovv-ztHAlZ1TjPwNnEgpB773mBUptA6A';
@@ -48,6 +55,9 @@ export function DashboardPage() {
   const [progressByCourseId, setProgressByCourseId] = useState<Record<string, CourseProgress>>({});
   const [thumbnailUrls, setThumbnailUrls] = useState<Record<string, string>>({});
   const [isLoadingCourses, setIsLoadingCourses] = useState(false);
+  const [tutorStats, setTutorStats] = useState<TutorDashboardStats | null>(null);
+  const [adminStats, setAdminStats] = useState<SystemStats | null>(null);
+  const [isLoadingRoleStats, setIsLoadingRoleStats] = useState(false);
   const [message, setMessage] = useState('');
   const user = getStoredUser();
   const navItems = useMemo(() => getRoleNav(user), [user]);
@@ -102,6 +112,36 @@ export function DashboardPage() {
       .finally(() => setIsLoadingCourses(false));
   }, [user?.role]);
 
+  useEffect(() => {
+    if (user?.role !== 'tutor' && user?.role !== 'admin') {
+      setTutorStats(null);
+      setAdminStats(null);
+      return;
+    }
+
+    setIsLoadingRoleStats(true);
+    const statsRequest = user.role === 'tutor'
+      ? api.getTutorDashboardStats()
+      : api.getSystemStats();
+
+    statsRequest
+      .then((stats) => {
+        if (user.role === 'tutor') {
+          setTutorStats(stats as TutorDashboardStats);
+          setAdminStats(null);
+        } else {
+          setAdminStats(stats as SystemStats);
+          setTutorStats(null);
+        }
+      })
+      .catch((err) => {
+        setTutorStats(null);
+        setAdminStats(null);
+        setMessage(err instanceof Error ? err.message : 'Không thể tải thống kê dashboard');
+      })
+      .finally(() => setIsLoadingRoleStats(false));
+  }, [user?.id, user?._id, user?.role]);
+
   const myCourses = useMemo(
     () =>
       enrollments
@@ -126,6 +166,44 @@ export function DashboardPage() {
 
   const activeCourses = myCourses.filter((course) => course.status === 'active').length;
   const pendingCourses = myCourses.filter((course) => course.status === 'pending').length;
+  const completedLessons = Object.values(progressByCourseId)
+    .reduce((total, progress) => total + progress.completed_lessons, 0);
+  const dashboardMetrics = useMemo(() => {
+    const unavailableValue = '—';
+
+    if (user?.role === 'tutor') {
+      return [
+        { label: 'Khóa học', value: isLoadingRoleStats ? unavailableValue : tutorStats?.courses ?? unavailableValue, icon: 'school', tone: 'text-[#adc7ff]' },
+        { label: 'Bài học', value: isLoadingRoleStats ? unavailableValue : tutorStats?.total_lessons ?? unavailableValue, icon: 'auto_stories', tone: 'text-[#24dfba]' },
+        { label: 'Quiz', value: isLoadingRoleStats ? unavailableValue : tutorStats?.total_quizzes ?? unavailableValue, icon: 'quiz', tone: 'text-[#c5a7ff]' },
+        { label: 'Đăng ký chờ duyệt', value: isLoadingRoleStats ? unavailableValue : tutorStats?.pending_enrollments ?? unavailableValue, icon: 'pending_actions', tone: 'text-[#ffc080]' },
+      ];
+    }
+
+    if (user?.role === 'admin') {
+      return [
+        { label: 'Tài khoản hoạt động', value: isLoadingRoleStats ? unavailableValue : adminStats?.users.active ?? unavailableValue, icon: 'group', tone: 'text-[#24dfba]' },
+        { label: 'Tài khoản chờ duyệt', value: isLoadingRoleStats ? unavailableValue : adminStats?.users.pending ?? unavailableValue, icon: 'manage_accounts', tone: 'text-[#ffc080]' },
+        { label: 'Khóa học', value: isLoadingRoleStats ? unavailableValue : adminStats?.content.active_courses ?? unavailableValue, icon: 'school', tone: 'text-[#adc7ff]' },
+        { label: 'API hôm nay', value: isLoadingRoleStats ? unavailableValue : adminStats?.traffic.today_requests ?? unavailableValue, icon: 'monitoring', tone: 'text-[#c5a7ff]' },
+      ];
+    }
+
+    return [
+      { label: 'Đang học', value: isLoadingCourses ? unavailableValue : activeCourses, icon: 'trending_up', tone: 'text-[#24dfba]' },
+      { label: 'Chờ duyệt', value: isLoadingCourses ? unavailableValue : pendingCourses, icon: 'schedule', tone: 'text-[#ffc080]' },
+      { label: 'Bài đã hoàn thành', value: isLoadingCourses ? unavailableValue : completedLessons, icon: 'task_alt', tone: 'text-[#adc7ff]' },
+    ];
+  }, [
+    activeCourses,
+    adminStats,
+    completedLessons,
+    isLoadingCourses,
+    isLoadingRoleStats,
+    pendingCourses,
+    tutorStats,
+    user?.role,
+  ]);
 
   return (
     <div className="min-h-screen overflow-x-hidden bg-[#0d131f] text-[#dde2f4] selection:bg-[#ffc080]/30">
@@ -161,12 +239,13 @@ export function DashboardPage() {
           </section>
 
           <section className="col-span-12 grid grid-cols-2 gap-3 lg:col-span-4">
-            {[
-              { label: 'Đang học', value: user?.role === 'student' ? activeCourses : roleActions.length, icon: 'trending_up', tone: 'text-[#24dfba]' },
-              { label: 'Chờ duyệt', value: user?.role === 'student' ? pendingCourses : 0, icon: 'schedule', tone: 'text-[#ffc080]' },
-              { label: 'Tác vụ nhanh', value: roleActions.length, icon: 'bolt', tone: 'text-[#adc7ff]' },
-            ].map((item, index) => (
-              <article key={item.label} className={`surface-card rounded-xl p-4 ${index === 2 ? 'col-span-2' : ''}`}>
+            {dashboardMetrics.map((item, index) => (
+              <article
+                key={item.label}
+                className={`surface-card rounded-xl p-4 ${
+                  dashboardMetrics.length % 2 === 1 && index === dashboardMetrics.length - 1 ? 'col-span-2' : ''
+                }`}
+              >
                 <span className="font-mono text-[12px] text-[#8b90a0]">{item.label}</span>
                 <div className="mt-4 flex items-end justify-between">
                   <strong className="text-[28px] leading-none text-[#dde2f4]">{item.value}</strong>

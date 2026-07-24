@@ -74,6 +74,39 @@ const getS3StorageStats = async () => {
 	}
 };
 
+export const getTutorDashboardStats = async (tutorId) => {
+	const courseIds = await Course.find({
+		created_by: tutorId,
+		is_deleted: false,
+	}).distinct("_id");
+
+	const [
+		totalLessons,
+		totalQuizzes,
+		pendingEnrollments,
+		activeStudentIds,
+	] = await Promise.all([
+		Lesson.countDocuments({ course_id: { $in: courseIds } }),
+		Quiz.countDocuments({ course_id: { $in: courseIds } }),
+		Enrollment.countDocuments({
+			course_id: { $in: courseIds },
+			status: "pending",
+		}),
+		Enrollment.distinct("user_id", {
+			course_id: { $in: courseIds },
+			status: "active",
+		}),
+	]);
+
+	return {
+		courses: courseIds.length,
+		total_lessons: totalLessons,
+		total_quizzes: totalQuizzes,
+		pending_enrollments: pendingEnrollments,
+		active_students: activeStudentIds.length,
+	};
+};
+
 export const getSystemStats = async () => {
 	const sevenDaysAgo = getDateKeyDaysAgo(6);
 	const today = getDateKeyDaysAgo(0);
