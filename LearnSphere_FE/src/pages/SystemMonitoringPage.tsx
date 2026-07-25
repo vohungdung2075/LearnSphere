@@ -21,6 +21,16 @@ function formatBytes(value: number | null) {
   return `${amount.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} ${units[unitIndex]}`;
 }
 
+function formatStorageMessage(message: string) {
+  const messages: Record<string, string> = {
+    'S3_STORAGE_LIMIT_BYTES is not configured': 'Chưa thiết lập ngưỡng dung lượng lưu trữ.',
+    'IAM role is missing s3:ListBucket permission': 'Hệ thống chưa có quyền đọc dung lượng lưu trữ.',
+    'Unable to read S3 bucket metrics': 'Không thể đọc thông tin dung lượng lưu trữ.',
+  };
+
+  return messages[message] ?? message;
+}
+
 function formatDate(value: string, includeTime = false) {
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
@@ -203,10 +213,10 @@ export function SystemMonitoringPage() {
                   </div>
                   <dl className="mt-7 space-y-3 text-[13px]">
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Đã dùng</dt><dd>{formatBytes(stats.storage.used_bytes)}</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Ngưỡng theo dõi</dt><dd>{formatBytes(stats.storage.capacity_bytes)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Ngưỡng theo dõi</dt><dd>{stats.storage.capacity_bytes === null ? 'Chưa thiết lập' : formatBytes(stats.storage.capacity_bytes)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Số tệp lưu trữ</dt><dd>{stats.storage.object_count === null ? '—' : formatNumber(stats.storage.object_count)}</dd></div>
                   </dl>
-                  {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{stats.storage.message}</p>}
+                  {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{formatStorageMessage(stats.storage.message)}</p>}
                 </article>
               </section>
 
