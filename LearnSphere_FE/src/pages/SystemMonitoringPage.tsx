@@ -21,6 +21,16 @@ function formatBytes(value: number | null) {
   return `${amount.toLocaleString('vi-VN', { maximumFractionDigits: 2 })} ${units[unitIndex]}`;
 }
 
+function formatStorageMessage(message: string) {
+  const messages: Record<string, string> = {
+    'S3_STORAGE_LIMIT_BYTES is not configured': 'Chưa thiết lập ngưỡng dung lượng lưu trữ.',
+    'IAM role is missing s3:ListBucket permission': 'Hệ thống chưa có quyền đọc dung lượng lưu trữ.',
+    'Unable to read S3 bucket metrics': 'Không thể đọc thông tin dung lượng lưu trữ.',
+  };
+
+  return messages[message] ?? message;
+}
+
 function formatDate(value: string, includeTime = false) {
   return new Intl.DateTimeFormat('vi-VN', {
     day: '2-digit',
@@ -121,7 +131,7 @@ export function SystemMonitoringPage() {
         <div className="mx-auto max-w-[1180px] space-y-5 p-4 md:p-6">
           <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#24dfba]">Admin control center</p>
+              <p className="mb-2 font-mono text-[11px] uppercase tracking-[0.16em] text-[#24dfba]">Khu vực quản trị</p>
               <h1 className="text-[32px] font-semibold tracking-tight">Giám sát Hệ thống</h1>
               <p className="mt-2 max-w-2xl text-[14px] leading-6 text-[#8b90a0]">
                 Tổng quan hoạt động hệ thống, tài khoản, nội dung học tập và tài nguyên lưu trữ.
@@ -150,10 +160,10 @@ export function SystemMonitoringPage() {
           {stats && (
             <>
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <MetricCard icon="ads_click" label="Hoạt động hôm nay" value={formatNumber(stats.traffic.today_requests)} detail={`${formatNumber(stats.traffic.total_requests)} lượt xử lý đã ghi nhận`} tone="bg-[#adc7ff]/10 text-[#adc7ff]" />
+                <MetricCard icon="ads_click" label="Lượt sử dụng hôm nay" value={formatNumber(stats.traffic.today_requests)} detail={`${formatNumber(stats.traffic.total_requests)} lượt sử dụng đã ghi nhận`} tone="bg-[#adc7ff]/10 text-[#adc7ff]" />
                 <MetricCard icon="verified_user" label="Người dùng hoạt động" value={formatNumber(stats.users.active)} detail={`${formatNumber(stats.users.total)} tài khoản toàn hệ thống`} tone="bg-[#24dfba]/10 text-[#24dfba]" />
                 <MetricCard icon="school" label="Khóa học" value={formatNumber(stats.content.active_courses)} detail={`${formatNumber(stats.content.total_lessons)} bài học · ${formatNumber(stats.content.total_quizzes)} quiz`} tone="bg-[#ffc080]/10 text-[#ffc080]" />
-                <MetricCard icon="speed" label="Phản hồi trung bình" value={`${formatNumber(stats.traffic.average_response_ms)} ms`} detail={`Tỷ lệ lỗi ${stats.traffic.error_rate_percent.toLocaleString('vi-VN')}%`} tone="bg-[#d5b8ff]/10 text-[#d5b8ff]" />
+                <MetricCard icon="speed" label="Thời gian phản hồi" value={`${formatNumber(stats.traffic.average_response_ms)} ms`} detail={`Tỷ lệ lỗi ${stats.traffic.error_rate_percent.toLocaleString('vi-VN')}%`} tone="bg-[#d5b8ff]/10 text-[#d5b8ff]" />
               </section>
 
               <section className="grid grid-cols-1 gap-5 xl:grid-cols-3">
@@ -179,7 +189,7 @@ export function SystemMonitoringPage() {
                               style={{ height: `${heightPercent}%` }}
                             >
                               <span className="absolute -top-7 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-[#0d131f] px-2 py-1 font-mono text-[10px] text-[#dde2f4] shadow-xl group-hover:block">
-                                {formatNumber(item.requests)} lượt xử lý
+                                {formatNumber(item.requests)} lượt sử dụng
                               </span>
                             </div>
                           </div>
@@ -191,7 +201,7 @@ export function SystemMonitoringPage() {
                 </article>
 
                 <article className="rounded-2xl border border-[#253047] bg-[#111827]/92 p-5 shadow-xl shadow-black/20 md:p-6">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Amazon S3</p>
+                  <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#8b90a0]">Kho lưu trữ</p>
                   <h2 className="mt-2 text-[22px] font-semibold">Dung lượng lưu trữ</h2>
                   <div className="mt-8 flex justify-center">
                     <div className="relative flex h-44 w-44 items-center justify-center rounded-full" style={{ background: `conic-gradient(#24dfba ${(stats.storage.usage_percent ?? 0) * 3.6}deg, #2f3542 0deg)` }}>
@@ -203,10 +213,10 @@ export function SystemMonitoringPage() {
                   </div>
                   <dl className="mt-7 space-y-3 text-[13px]">
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Đã dùng</dt><dd>{formatBytes(stats.storage.used_bytes)}</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Ngưỡng theo dõi</dt><dd>{formatBytes(stats.storage.capacity_bytes)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Giới hạn theo dõi</dt><dd>{stats.storage.capacity_bytes === null ? 'Chưa thiết lập' : formatBytes(stats.storage.capacity_bytes)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Số tệp lưu trữ</dt><dd>{stats.storage.object_count === null ? '—' : formatNumber(stats.storage.object_count)}</dd></div>
                   </dl>
-                  {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{stats.storage.message}</p>}
+                  {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{formatStorageMessage(stats.storage.message)}</p>}
                 </article>
               </section>
 

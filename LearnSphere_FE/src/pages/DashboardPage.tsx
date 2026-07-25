@@ -185,7 +185,7 @@ export function DashboardPage() {
         { label: 'Tài khoản hoạt động', value: isLoadingRoleStats ? unavailableValue : adminStats?.users.active ?? unavailableValue, icon: 'group', tone: 'text-[#24dfba]' },
         { label: 'Tài khoản chờ duyệt', value: isLoadingRoleStats ? unavailableValue : adminStats?.users.pending ?? unavailableValue, icon: 'manage_accounts', tone: 'text-[#ffc080]' },
         { label: 'Khóa học', value: isLoadingRoleStats ? unavailableValue : adminStats?.content.active_courses ?? unavailableValue, icon: 'school', tone: 'text-[#adc7ff]' },
-        { label: 'API hôm nay', value: isLoadingRoleStats ? unavailableValue : adminStats?.traffic.today_requests ?? unavailableValue, icon: 'monitoring', tone: 'text-[#c5a7ff]' },
+        { label: 'Lượt sử dụng hôm nay', value: isLoadingRoleStats ? unavailableValue : adminStats?.traffic.today_requests ?? unavailableValue, icon: 'monitoring', tone: 'text-[#c5a7ff]' },
       ];
     }
 
