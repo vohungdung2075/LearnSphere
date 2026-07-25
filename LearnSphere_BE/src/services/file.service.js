@@ -2,11 +2,13 @@ import crypto from "node:crypto";
 import path from "node:path";
 import mongoose from "mongoose";
 import {
-	DeleteObjectsCommand,
+	AbortMultipartUploadCommand,
+	CompleteMultipartUploadCommand,
+	CreateMultipartUploadCommand,
 	GetObjectCommand,
 	HeadObjectCommand,
 	PutObjectCommand,
-	paginateListObjectsV2,
+	UploadPartCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -15,84 +17,49 @@ import Course from "../models/Course.model.js";
 import Lesson from "../models/Lesson.model.js";
 import Enrollment from "../models/Enrollment.model.js";
 import User from "../models/User.model.js";
+import UploadSession from "../models/UploadSession.model.js";
+import { queueS3ObjectsCleanup } from "./s3-cleanup-task.service.js";
+import { deleteS3Objects } from "./s3-storage.service.js";
+import { requireActiveCourseCreator } from "./course-availability.service.js";
+
+export { deleteCourseS3Prefix, deleteS3Objects } from "./s3-storage.service.js";
 
 const MB = 1024 * 1024;
+const MULTIPART_PROCESSING_TIMEOUT_MS = 15 * 60 * 1000;
 
 const getS3Bucket = () => {
 	if (!process.env.AWS_S3_BUCKET) throw new Error("S3_NOT_CONFIGURED");
 	return process.env.AWS_S3_BUCKET;
 };
 
-const throwIfDeleteFailed = (response) => {
-	if (response.Errors?.length) {
-		const failedKeys = response.Errors.map((item) => item.Key).filter(Boolean);
-		const error = new Error("S3_DELETE_FAILED");
-		error.failedKeys = failedKeys;
-		throw error;
-	}
-};
-
-export const deleteS3Objects = async (fileKeys = []) => {
+export const deleteS3ObjectsBestEffort = async (fileKeys = [], context = "unspecified") => {
 	const keys = [...new Set(fileKeys.filter((key) => typeof key === "string" && key.trim()).map((key) => key.trim()))];
-	if (!keys.length) return { deleted_count: 0 };
+	if (!keys.length) return { deleted_count: 0, cleanup_failed: false };
 
 	try {
-		let deletedCount = 0;
-		for (let index = 0; index < keys.length; index += 1000) {
-			const chunk = keys.slice(index, index + 1000);
-			const response = await s3Client.send(new DeleteObjectsCommand({
-				Bucket: getS3Bucket(),
-				Delete: {
-					Objects: chunk.map((Key) => ({ Key })),
-					Quiet: true,
-				},
-			}));
-			throwIfDeleteFailed(response);
-			deletedCount += chunk.length;
-		}
-		return { deleted_count: deletedCount };
+		const result = await deleteS3Objects(keys);
+		return { ...result, cleanup_failed: false };
 	} catch (error) {
-		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
-		const wrappedError = new Error("S3_DELETE_FAILED");
-		wrappedError.cause = error;
-		throw wrappedError;
-	}
-};
-
-export const deleteCourseS3Prefix = async (courseId) => {
-	if (!mongoose.isValidObjectId(courseId)) throw new Error("INVALID_COURSE_ID");
-	const prefix = `courses/${courseId}/`;
-	let deletedCount = 0;
-
-	try {
-		const paginator = paginateListObjectsV2(
-			{ client: s3Client },
-			{ Bucket: getS3Bucket(), Prefix: prefix },
-		);
-
-		for await (const page of paginator) {
-			const keys = (page.Contents ?? [])
-				.map((object) => object.Key)
-				.filter((key) => typeof key === "string" && key.startsWith(prefix));
-			if (!keys.length) continue;
-
-			const response = await s3Client.send(new DeleteObjectsCommand({
-				Bucket: getS3Bucket(),
-				Delete: {
-					Objects: keys.map((Key) => ({ Key })),
-					Quiet: true,
-				},
-			}));
-			throwIfDeleteFailed(response);
-			deletedCount += keys.length;
+		let cleanupTask = null;
+		let queueError = null;
+		try {
+			cleanupTask = await queueS3ObjectsCleanup(keys, undefined, context);
+		} catch (caughtQueueError) {
+			queueError = caughtQueueError;
 		}
-
-		return { deleted_count: deletedCount, prefix };
-	} catch (error) {
-		if (error.message === "S3_DELETE_FAILED" || error.message === "S3_NOT_CONFIGURED") throw error;
-		const wrappedError = new Error("S3_DELETE_FAILED");
-		wrappedError.cause = error;
-		throw wrappedError;
+		console.error("[S3 cleanup] Unable to delete obsolete or orphaned objects:", {
+			context,
+			keys,
+			error: error.message,
+			failed_keys: error.failedKeys ?? [],
+			cleanup_task_id: cleanupTask?._id?.toString() ?? null,
+			queue_error: queueError?.message ?? null,
+		});
+		return {
+			deleted_count: 0,
+			cleanup_failed: true,
+			cleanup_queued: Boolean(cleanupTask),
+		};
 	}
 };
 
@@ -178,6 +145,38 @@ const getExpirySeconds = (rawValue, fallback, maximum) => {
 		: fallback;
 };
 
+const getUploadSessionExpiry = () => {
+	const hours = Math.min(
+		168,
+		getExpirySeconds(process.env.UPLOAD_SESSION_TTL_HOURS, 24, 168),
+	);
+	return new Date(Date.now() + hours * 60 * 60 * 1000);
+};
+
+const createUploadSession = ({
+	ownerId,
+	courseId = null,
+	folder,
+	fileKey,
+	contentType,
+	fileSize,
+	uploadMode,
+	multipartUploadId = "",
+	partSize = 0,
+}) => UploadSession.create({
+	owner_id: ownerId,
+	course_id: courseId,
+	folder,
+	file_key: fileKey,
+	content_type: contentType,
+	file_size: fileSize,
+	upload_mode: uploadMode,
+	multipart_upload_id: multipartUploadId,
+	part_size: partSize,
+	status: "pending",
+	expires_at: getUploadSessionExpiry(),
+});
+
 const validateExtensionAndContentType = (fileName, contentType, rule) => {
 	const extension = path.extname(fileName).toLowerCase();
 	const allowedExtensions = rule.contentTypes[contentType];
@@ -237,8 +236,18 @@ export const createPresignedUpload = async ({ course_id, file_name, content_type
 	const expiresIn = getExpirySeconds(process.env.S3_UPLOAD_URL_EXPIRES_IN, 300, 900);
 
 	const uploadUrl = await getSignedUrl(s3Client, command, {expiresIn});
+	const uploadSession = await createUploadSession({
+		ownerId: userId,
+		courseId: course_id,
+		folder,
+		fileKey,
+		contentType: content_type,
+		fileSize: file_size,
+		uploadMode: "single",
+	});
 
 	return {
+		upload_session_id: uploadSession._id,
 		upload_url: uploadUrl,
 		file_key: fileKey,
 		content_type,
@@ -268,8 +277,17 @@ export const createProfileAvatarUpload = async ({ file_name, content_type, file_
 	});
 	const expiresIn = getExpirySeconds(process.env.S3_UPLOAD_URL_EXPIRES_IN, 300, 900);
 	const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn });
+	const uploadSession = await createUploadSession({
+		ownerId: userId,
+		folder: "profile-avatars",
+		fileKey,
+		contentType: content_type,
+		fileSize: file_size,
+		uploadMode: "single",
+	});
 
 	return {
+		upload_session_id: uploadSession._id,
 		upload_url: uploadUrl,
 		file_key: fileKey,
 		content_type,
@@ -277,6 +295,339 @@ export const createProfileAvatarUpload = async ({ file_name, content_type, file_
 		max_size_bytes: rule.maxSizeBytes,
 		expires_in: expiresIn,
 	};
+};
+
+const getOwnedUploadSession = async (sessionId, userId) => {
+	if (!mongoose.isValidObjectId(sessionId)) throw new Error("INVALID_UPLOAD_SESSION_ID");
+	const session = await UploadSession.findOne({ _id: sessionId, owner_id: userId })
+		.select("+multipart_upload_id");
+	if (!session) throw new Error("UPLOAD_SESSION_NOT_FOUND");
+	return session;
+};
+
+const verifyUploadedObject = async (session) => {
+	let metadata;
+	try {
+		metadata = await s3Client.send(new HeadObjectCommand({
+			Bucket: getS3Bucket(),
+			Key: session.file_key,
+		}));
+	} catch (error) {
+		if (error?.$metadata?.httpStatusCode === 404 || ["NotFound", "NoSuchKey"].includes(error.name)) {
+			throw new Error("FILE_NOT_FOUND_IN_S3");
+		}
+		throw new Error("S3_HEAD_FAILED", { cause: error });
+	}
+
+	const contentType = metadata.ContentType?.split(";")[0].trim().toLowerCase();
+	if (metadata.ContentLength !== session.file_size || contentType !== session.content_type) {
+		throw new Error("UPLOADED_FILE_METADATA_MISMATCH");
+	}
+	return metadata;
+};
+
+const markMultipartUploaded = async (sessionId) => UploadSession.findOneAndUpdate(
+	{ _id: sessionId, status: { $ne: "uploaded" } },
+	{
+		$set: {
+			status: "uploaded",
+			locked_at: null,
+			last_error: "",
+		},
+	},
+	{ returnDocument: "after" },
+).select("+multipart_upload_id");
+
+const reconcileCompletedMultipart = async (session) => {
+	try {
+		await verifyUploadedObject(session);
+		const updatedSession = await markMultipartUploaded(session._id);
+		return updatedSession ?? UploadSession.findById(session._id).select("+multipart_upload_id");
+	} catch (error) {
+		if (error.message === "FILE_NOT_FOUND_IN_S3") return null;
+		throw error;
+	}
+};
+
+export const confirmUploadSession = async (sessionId, userId) => {
+	const session = await getOwnedUploadSession(sessionId, userId);
+	if (session.upload_mode !== "single") throw new Error("INVALID_UPLOAD_MODE");
+	if (session.status === "uploaded") {
+		return { upload_session_id: session._id, file_key: session.file_key, status: session.status };
+	}
+	await verifyUploadedObject(session);
+	session.status = "uploaded";
+	session.last_error = "";
+	await session.save();
+	return { upload_session_id: session._id, file_key: session.file_key, status: session.status };
+};
+
+export const createMultipartUpload = async (
+	{ course_id, file_name, content_type, file_size, folder } = {},
+	userId,
+	userRole,
+) => {
+	await checkCourseOwner(course_id, userId, userRole);
+	if (folder !== "lessons/videos") throw new Error("MULTIPART_VIDEO_ONLY");
+	if (typeof file_name !== "string" || typeof content_type !== "string") throw new Error("INVALID_FILE_REQUEST");
+
+	const rule = uploadRules[folder];
+	validateExtensionAndContentType(file_name, content_type, rule);
+	if (!Number.isSafeInteger(file_size) || file_size < 1) throw new Error("INVALID_FILE_SIZE");
+	if (file_size > rule.maxSizeBytes) throw new Error("FILE_TOO_LARGE");
+
+	const safeFileName = cleanFileName(file_name);
+	const fileKey = `courses/${course_id}/${folder}/${crypto.randomUUID()}-${safeFileName}`;
+	const partSizeMb = Math.min(
+		100,
+		Math.max(5, getExpirySeconds(process.env.S3_MULTIPART_PART_SIZE_MB, 10, 100)),
+	);
+	const partSize = partSizeMb * MB;
+	const partCount = Math.ceil(file_size / partSize);
+	if (partCount > 10_000) throw new Error("MULTIPART_TOO_MANY_PARTS");
+
+	const created = await s3Client.send(new CreateMultipartUploadCommand({
+		Bucket: getS3Bucket(),
+		Key: fileKey,
+		ContentType: content_type,
+	}));
+	if (!created.UploadId) throw new Error("S3_MULTIPART_START_FAILED");
+
+	let uploadSession;
+	try {
+		uploadSession = await createUploadSession({
+			ownerId: userId,
+			courseId: course_id,
+			folder,
+			fileKey,
+			contentType: content_type,
+			fileSize: file_size,
+			uploadMode: "multipart",
+			multipartUploadId: created.UploadId,
+			partSize,
+		});
+
+		const expiresIn = getExpirySeconds(process.env.S3_MULTIPART_URL_EXPIRES_IN, 3600, 43200);
+		const parts = await Promise.all(
+			Array.from({ length: partCount }, async (_, index) => {
+				const partNumber = index + 1;
+				const uploadUrl = await getSignedUrl(
+					s3Client,
+					new UploadPartCommand({
+						Bucket: getS3Bucket(),
+						Key: fileKey,
+						UploadId: created.UploadId,
+						PartNumber: partNumber,
+					}),
+					{ expiresIn },
+				);
+				return { part_number: partNumber, upload_url: uploadUrl };
+			}),
+		);
+
+		return {
+			upload_session_id: uploadSession._id,
+			file_key: fileKey,
+			file_size,
+			content_type,
+			part_size: partSize,
+			part_count: partCount,
+			expires_in: expiresIn,
+			parts,
+		};
+	} catch (error) {
+		await s3Client.send(new AbortMultipartUploadCommand({
+			Bucket: getS3Bucket(),
+			Key: fileKey,
+			UploadId: created.UploadId,
+		})).catch(() => {});
+		if (uploadSession) await UploadSession.deleteOne({ _id: uploadSession._id }).catch(() => {});
+		throw error;
+	}
+};
+
+export const completeMultipartUpload = async (sessionId, completedParts, userId) => {
+	const session = await getOwnedUploadSession(sessionId, userId);
+	if (session.upload_mode !== "multipart") throw new Error("INVALID_UPLOAD_MODE");
+	if (session.status === "uploaded") {
+		return { upload_session_id: session._id, file_key: session.file_key, status: session.status };
+	}
+
+	const expectedPartCount = Math.ceil(session.file_size / session.part_size);
+	if (!Array.isArray(completedParts) || completedParts.length !== expectedPartCount) {
+		throw new Error("INVALID_MULTIPART_PARTS");
+	}
+	const normalizedParts = completedParts
+		.map((part) => ({
+			PartNumber: Number(part?.part_number),
+			ETag: typeof part?.etag === "string" ? part.etag.trim() : "",
+		}))
+		.sort((a, b) => a.PartNumber - b.PartNumber);
+	if (normalizedParts.some((part, index) => part.PartNumber !== index + 1 || !part.ETag)) {
+		throw new Error("INVALID_MULTIPART_PARTS");
+	}
+
+	const staleBefore = new Date(Date.now() - MULTIPART_PROCESSING_TIMEOUT_MS);
+	if (session.status === "processing" && session.locked_at && session.locked_at > staleBefore) {
+		const reconciled = await reconcileCompletedMultipart(session);
+		if (reconciled) {
+			return {
+				upload_session_id: reconciled._id,
+				file_key: reconciled.file_key,
+				status: reconciled.status,
+			};
+		}
+		throw new Error("UPLOAD_COMPLETION_IN_PROGRESS");
+	}
+
+	const lockTime = new Date();
+	const claimedSession = await UploadSession.findOneAndUpdate(
+		{
+			_id: session._id,
+			owner_id: userId,
+			upload_mode: "multipart",
+			$or: [
+				{ status: { $in: ["pending", "failed"] } },
+				{ status: "processing", locked_at: { $lte: staleBefore } },
+				{ status: "processing", locked_at: null },
+			],
+		},
+		{
+			$set: {
+				status: "processing",
+				locked_at: lockTime,
+				last_error: "",
+			},
+			$inc: { attempts: 1 },
+		},
+		{ returnDocument: "after" },
+	).select("+multipart_upload_id");
+
+	if (!claimedSession) {
+		const latestSession = await getOwnedUploadSession(sessionId, userId);
+		if (latestSession.status === "uploaded") {
+			return {
+				upload_session_id: latestSession._id,
+				file_key: latestSession.file_key,
+				status: latestSession.status,
+			};
+		}
+		const reconciled = await reconcileCompletedMultipart(latestSession);
+		if (reconciled) {
+			return {
+				upload_session_id: reconciled._id,
+				file_key: reconciled.file_key,
+				status: reconciled.status,
+			};
+		}
+		throw new Error("UPLOAD_COMPLETION_IN_PROGRESS");
+	}
+
+	try {
+		try {
+			await s3Client.send(new CompleteMultipartUploadCommand({
+				Bucket: getS3Bucket(),
+				Key: claimedSession.file_key,
+				UploadId: claimedSession.multipart_upload_id,
+				MultipartUpload: { Parts: normalizedParts },
+			}));
+		} catch (error) {
+			if (!["NoSuchUpload", "NotFound"].includes(error.name)) {
+				throw new Error("S3_MULTIPART_COMPLETE_FAILED", { cause: error });
+			}
+
+			const reconciled = await reconcileCompletedMultipart(claimedSession);
+			if (!reconciled) {
+				throw new Error("S3_MULTIPART_COMPLETE_FAILED", { cause: error });
+			}
+			return {
+				upload_session_id: reconciled._id,
+				file_key: reconciled.file_key,
+				status: reconciled.status,
+			};
+		}
+
+		await verifyUploadedObject(claimedSession);
+		const uploadedSession = await markMultipartUploaded(claimedSession._id);
+		return {
+			upload_session_id: claimedSession._id,
+			file_key: claimedSession.file_key,
+			status: uploadedSession?.status ?? "uploaded",
+		};
+	} catch (error) {
+		await UploadSession.updateOne(
+			{
+				_id: claimedSession._id,
+				status: "processing",
+				locked_at: lockTime,
+			},
+			{
+				$set: {
+					status: "failed",
+					locked_at: null,
+					last_error: String(error.message || error).slice(0, 1000),
+				},
+			},
+		);
+		throw error;
+	}
+};
+
+const isUploadFileReferenced = async (fileKey) => {
+	const [course, lesson, user] = await Promise.all([
+		Course.exists({ thumbnail_key: fileKey }),
+		Lesson.exists({ $or: [{ video_key: fileKey }, { document_key: fileKey }] }),
+		User.exists({ avatar_key: fileKey }),
+	]);
+	return Boolean(course || lesson || user);
+};
+
+export const abortUploadSession = async (sessionId, userId) => {
+	const session = await getOwnedUploadSession(sessionId, userId);
+	if (session.status === "uploaded" && await isUploadFileReferenced(session.file_key)) {
+		await UploadSession.deleteOne({ _id: session._id });
+		return { message: "Upload is already attached and was not deleted" };
+	}
+
+	if (session.upload_mode === "single") {
+		try {
+			await deleteS3Objects([session.file_key]);
+		} finally {
+			await UploadSession.updateOne(
+				{ _id: session._id },
+				{
+					$set: {
+						status: "failed",
+						last_error: "Upload aborted by user",
+						expires_at: new Date(Date.now() + 10 * 60 * 1000),
+					},
+				},
+			);
+		}
+		return { message: "Upload session aborted; final cleanup scheduled" };
+	}
+
+	if (session.upload_mode === "multipart" && session.multipart_upload_id && session.status !== "uploaded") {
+		if (
+			session.status === "processing" &&
+			session.locked_at &&
+			session.locked_at > new Date(Date.now() - MULTIPART_PROCESSING_TIMEOUT_MS)
+		) {
+			throw new Error("UPLOAD_COMPLETION_IN_PROGRESS");
+		}
+		try {
+			await s3Client.send(new AbortMultipartUploadCommand({
+				Bucket: getS3Bucket(),
+				Key: session.file_key,
+				UploadId: session.multipart_upload_id,
+			}));
+		} catch (error) {
+			if (!["NoSuchUpload", "NotFound"].includes(error.name)) throw error;
+		}
+	}
+	await deleteS3Objects([session.file_key]);
+	await UploadSession.deleteOne({ _id: session._id });
+	return { message: "Upload session aborted" };
 };
 
 const validateProfileAvatarKey = async (userId, fileKey) => {
@@ -384,6 +735,7 @@ export const createPresignedDownload = async ({ lesson_id, target_type } = {}, u
 		if (!isOwner) throw new Error("FORBIDDEN_FILE_ACTION");
 	}
 	if (userRole === "student") {
+		await requireActiveCourseCreator(course);
 		const enrollment = await Enrollment.findOne({ user_id: userId, course_id: course._id, status: "active" });
 		if (!enrollment) throw new Error("ACTIVE_ENROLLMENT_REQUIRED");
 	}
@@ -408,6 +760,7 @@ export const createCourseThumbnailDownload = async (courseId) => {
 
 	const course = await Course.findOne({ _id: courseId, is_deleted: false });
 	if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 	if (!course.thumbnail_key) throw new Error("FILE_NOT_FOUND_IN_RESOURCE");
 
 	const validatedKey = await validateStoredFileKey({

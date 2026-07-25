@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppHeader } from '../components/AppHeader';
 import { AppToast } from '../components/AppToast';
 import { RoleSidebar } from '../components/RoleSidebar';
@@ -66,6 +66,10 @@ export function QuizPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [quizStatusFilter, setQuizStatusFilter] = useState<QuizStatusFilter>('all');
   const [difficultyFilter, setDifficultyFilter] = useState<DifficultyFilter>('all');
+  const selectedAnswersRef = useRef<Record<string, string[]>>({});
+  const autoSubmitTriggeredRef = useRef(false);
+  const submissionInFlightRef = useRef(false);
+  const [autoSubmitStatus, setAutoSubmitStatus] = useState<'idle' | 'submitting' | 'failed'>('idle');
 
   const [hasStarted, setHasStarted] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -164,6 +168,10 @@ export function QuizPage() {
     setHasStarted(false);
     setQuestions([]);
     setSelectedAnswers({});
+    selectedAnswersRef.current = {};
+    autoSubmitTriggeredRef.current = false;
+    submissionInFlightRef.current = false;
+    setAutoSubmitStatus('idle');
     setAttemptId('');
     setExpiresAt('');
     setTimeLeft(0);
@@ -203,10 +211,12 @@ export function QuizPage() {
       const attempt = await api.startQuiz(quizIdToStart);
       setAttemptId(attempt.attempt_id);
       setExpiresAt(attempt.expires_at);
-      const remainingSeconds = Math.max(0, Math.floor((new Date(attempt.expires_at).getTime() - Date.now()) / 1000));
+      const remainingSeconds = Math.max(0, Math.ceil((new Date(attempt.expires_at).getTime() - Date.now()) / 1000));
       setTimeLeft(remainingSeconds);
       setQuestions(attempt.questions);
       setHasStarted(true);
+      autoSubmitTriggeredRef.current = false;
+      setAutoSubmitStatus('idle');
       await refreshQuizAttempts(quizzes);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : 'Không thể khởi tạo bài kiểm tra';
@@ -222,25 +232,42 @@ export function QuizPage() {
     }
   }
 
-  // Countdown Timer & Auto-submit
+  // Submit before the server deadline, leaving enough time for a visible retry.
+  // Answers are read from a ref so a scheduled callback never submits stale state.
   useEffect(() => {
     if (!expiresAt || submittedResult) return;
 
-    const timer = window.setInterval(() => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+    const deadline = new Date(expiresAt).getTime();
+    if (!Number.isFinite(deadline)) {
+      setMessage('Thời hạn làm quiz không hợp lệ. Vui lòng tải lại trang.');
+      return;
+    }
+
+    const updateCountdown = () => {
+      const remainingMs = deadline - Date.now();
+      const remaining = Math.max(0, Math.ceil(remainingMs / 1000));
       setTimeLeft(remaining);
+    };
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 250);
 
-      if (remaining === 0 && !isSubmitting && !submittedResult) {
-        window.clearInterval(timer);
-        setMessage('Thời gian làm bài đã hết! Hệ thống đang tự động nộp bài...');
-        void handleDoSubmit();
+    const triggerAutoSubmit = () => {
+      if (!autoSubmitTriggeredRef.current) {
+        autoSubmitTriggeredRef.current = true;
+        setMessage('Thời gian sắp hết! Hệ thống đang tự động nộp bài...');
+        setAutoSubmitStatus('submitting');
+        void handleDoSubmit(true);
       }
-    }, 1000);
+    };
+    const submitTimer = window.setTimeout(triggerAutoSubmit, Math.max(0, deadline - Date.now() - 5_000));
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      window.clearTimeout(submitTimer);
+    };
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expiresAt, submittedResult, isSubmitting]);
+  }, [expiresAt, submittedResult]);
 
   const answeredCount = Object.values(selectedAnswers).filter((answerIds) => answerIds.length > 0).length;
   const progressPercent = questions.length ? Math.round((answeredCount / questions.length) * 100) : 0;
@@ -289,26 +316,31 @@ export function QuizPage() {
 
     setSelectedAnswers((current) => {
       const existing = current[question._id] ?? [];
+      let nextAnswers: Record<string, string[]>;
       if (question.question_type === 'single_choice') {
-        return { ...current, [question._id]: [answerId] };
+        nextAnswers = { ...current, [question._id]: [answerId] };
+      } else {
+        nextAnswers = {
+          ...current,
+          [question._id]: existing.includes(answerId)
+            ? existing.filter((id) => id !== answerId)
+            : [...existing, answerId],
+        };
       }
-
-      return {
-        ...current,
-        [question._id]: existing.includes(answerId)
-          ? existing.filter((id) => id !== answerId)
-          : [...existing, answerId],
-      };
+      selectedAnswersRef.current = nextAnswers;
+      return nextAnswers;
     });
   }
 
-  async function handleDoSubmit() {
-    if (!attemptId || isSubmitting) return;
+  async function handleDoSubmit(isAutomatic = false) {
+    if (!attemptId || submissionInFlightRef.current) return;
 
+    submissionInFlightRef.current = true;
     setIsSubmitting(true);
     setMessage('');
+    if (isAutomatic) setAutoSubmitStatus('submitting');
 
-    const formattedAnswers = Object.entries(selectedAnswers).map(([questionId, selectedIds]) => ({
+    const formattedAnswers = Object.entries(selectedAnswersRef.current).map(([questionId, selectedIds]) => ({
       question_id: questionId,
       selected_answer_ids: selectedIds,
     }));
@@ -316,6 +348,7 @@ export function QuizPage() {
     try {
       const result = await api.submitQuiz(attemptId, formattedAnswers);
       setSubmittedResult(result);
+      setAutoSubmitStatus('idle');
       setMessage('Nộp bài thành công!');
       // Refresh history
       if (selectedQuizId) {
@@ -324,8 +357,15 @@ export function QuizPage() {
         setAttemptsByQuizId((current) => ({ ...current, [selectedQuizId]: history }));
       }
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'Nộp bài thất bại. Vui lòng thử lại.');
+      const errorMessage = err instanceof Error ? err.message : 'Nộp bài thất bại. Vui lòng thử lại.';
+      if (isAutomatic || autoSubmitTriggeredRef.current) {
+        setAutoSubmitStatus('failed');
+        setMessage(`Tự động nộp bài thất bại: ${errorMessage}`);
+      } else {
+        setMessage(errorMessage);
+      }
     } finally {
+      submissionInFlightRef.current = false;
       setIsSubmitting(false);
     }
   }
@@ -649,6 +689,8 @@ export function QuizPage() {
                   setHasStarted(false);
                   setQuestions([]);
                   setSelectedAnswers({});
+                  selectedAnswersRef.current = {};
+                  autoSubmitTriggeredRef.current = false;
                   setAttemptId('');
                   setExpiresAt('');
                   setTimeLeft(0);
@@ -674,6 +716,22 @@ export function QuizPage() {
             <span className="material-symbols-outlined mb-3 text-[44px] text-[#8b90a0]">quiz</span>
             <h2 className="text-[22px] font-semibold text-[#dde2f4]">Chưa có câu hỏi quiz</h2>
           </div>
+        )}
+
+        {hasStarted && !submittedResult && autoSubmitStatus === 'failed' && (
+          <section className="flex flex-col gap-3 rounded-xl border border-[#ffb4ab]/40 bg-[#ffb4ab]/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-[14px] leading-6 text-[#ffd9d5]">
+              Hệ thống chưa nộp được bài. Đáp án vẫn còn trên trang; hãy thử nộp lại ngay.
+            </p>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => void handleDoSubmit(true)}
+              className="shrink-0 rounded-lg bg-[#ffb4ab] px-4 py-2 font-mono text-[13px] font-bold text-[#5f1414] disabled:opacity-50"
+            >
+              {isSubmitting ? 'Đang thử lại...' : 'Thử nộp lại'}
+            </button>
+          </section>
         )}
 
         {/* Questions list */}

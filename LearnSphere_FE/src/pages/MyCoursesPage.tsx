@@ -34,6 +34,7 @@ export function MyCoursesPage() {
   const [sortMode, setSortMode] = useState<SortMode>('recent');
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState('');
+  const [unenrollingCourseId, setUnenrollingCourseId] = useState('');
 
   async function loadMyCourses({ silent = false } = {}) {
     if (!silent) {
@@ -154,6 +155,26 @@ export function MyCoursesPage() {
 
   const featuredCourse = courses.find((course) => course.status === 'active') ?? courses[0];
   const featuredImage = featuredCourse?.thumbnailUrl || fallbackCourseImage;
+
+  async function handleUnenroll(courseId: string, status: Enrollment['status']) {
+    const confirmed = window.confirm(
+      status === 'pending'
+        ? 'Hủy yêu cầu đăng ký khóa học này?'
+        : 'Rời khóa học này? Bạn sẽ mất quyền truy cập, nhưng tiến độ và lịch sử quiz vẫn được giữ.',
+    );
+    if (!confirmed) return;
+
+    setUnenrollingCourseId(courseId);
+    try {
+      const result = await api.unenrollCourse(courseId);
+      setMessage(result.message);
+      await loadMyCourses();
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể hủy đăng ký khóa học');
+    } finally {
+      setUnenrollingCourseId('');
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#0d131f] text-[#dde2f4] selection:bg-[#4a8eff] selection:text-[#00285b]">
@@ -304,22 +325,37 @@ export function MyCoursesPage() {
                       </div>
                     </div>
 
-                    <div className="mt-auto flex items-center justify-between gap-3 pt-5">
+                    <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-5">
                       <span className="inline-flex items-center gap-1.5 font-mono text-[11px] text-[#8b90a0]">
                         <span className="material-symbols-outlined text-[15px]">groups</span>
                         {course.enrollmentCount} học viên
                       </span>
-                      <a
-                        className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 font-mono text-[12px] font-bold transition ${
-                          isActive
-                            ? 'bg-[#adc7ff] text-[#002e68] hover:brightness-110'
-                            : 'pointer-events-none border border-[#ffc080]/30 bg-[#ffc080]/10 text-[#ffc080]'
-                        }`}
-                        href={isActive ? href : '#'}
-                      >
-                        <span className="material-symbols-outlined text-[17px]">{isActive ? 'play_arrow' : 'hourglass_top'}</span>
-                        {isActive ? 'Vào học' : 'Chờ duyệt'}
-                      </a>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <button
+                          className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-[#ffb4ab]/35 px-3 py-3 font-mono text-[11px] font-bold text-[#ffb4ab] transition hover:bg-[#ffb4ab]/10 disabled:cursor-wait disabled:opacity-60"
+                          type="button"
+                          disabled={unenrollingCourseId === course.id}
+                          onClick={() => void handleUnenroll(course.id, course.status)}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">logout</span>
+                          {unenrollingCourseId === course.id
+                            ? 'Đang xử lý...'
+                            : isActive
+                              ? 'Rời khóa'
+                              : 'Hủy yêu cầu'}
+                        </button>
+                        <a
+                          className={`inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 font-mono text-[12px] font-bold transition ${
+                            isActive
+                              ? 'bg-[#adc7ff] text-[#002e68] hover:brightness-110'
+                              : 'pointer-events-none border border-[#ffc080]/30 bg-[#ffc080]/10 text-[#ffc080]'
+                          }`}
+                          href={isActive ? href : '#'}
+                        >
+                          <span className="material-symbols-outlined text-[17px]">{isActive ? 'play_arrow' : 'hourglass_top'}</span>
+                          {isActive ? 'Vào học' : 'Chờ duyệt'}
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </article>

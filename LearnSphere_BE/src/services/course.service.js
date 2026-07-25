@@ -2,7 +2,10 @@ import mongoose from "mongoose";
 import Course from "../models/Course.model.js";
 import Enrollment from "../models/Enrollment.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
-import { validateStoredFileKey } from "./file.service.js";
+import { deleteS3ObjectsBestEffort, validateStoredFileKey } from "./file.service.js";
+import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
+import { isCourseCreatorActive, requireActiveCourseCreator } from "./course-availability.service.js";
+import { createNotificationBestEffort } from "./notification.service.js";
 
 export const createCourse = async ( { title, description, enrollment_type }, creatorId ) => {
 	const allowedEnrollmentTypes = ["open", "approval_required"];
@@ -23,18 +26,22 @@ export const createCourse = async ( { title, description, enrollment_type }, cre
 
 export const getAllCourses = async () => {
 	const courses = await Course.find({ is_deleted: false })
-		.populate("created_by", "full_name role") 
+		.populate("created_by", "full_name role account_status")
 		.sort({ createdAt: -1 }); 
+	const availableCourses = [];
+	for (const course of courses) {
+		if (await isCourseCreatorActive(course)) availableCourses.push(course);
+	}
 
 	const enrollmentCounts = await Enrollment.aggregate([
-		{ $match: { status: "active", course_id: { $in: courses.map((course) => course._id) } } },
+		{ $match: { status: "active", course_id: { $in: availableCourses.map((course) => course._id) } } },
 		{ $group: { _id: "$course_id", enrollment_count: { $sum: 1 } } },
 	]);
 	const enrollmentCountByCourseId = new Map(
 		enrollmentCounts.map((item) => [item._id.toString(), item.enrollment_count]),
 	);
 
-	return courses.map((course) => ({
+	return availableCourses.map((course) => ({
 		...course.toObject(),
 		enrollment_count: enrollmentCountByCourseId.get(course._id.toString()) ?? 0,
 	}));
@@ -48,6 +55,7 @@ export const getCourseById = async (courseId) => {
 		.populate("created_by", "full_name role");
 
 	if (!course) throw new Error("COURSE_NOT_FOUND");
+	await requireActiveCourseCreator(course);
 
 	return course;
 };
@@ -76,6 +84,7 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
     }
 	
 	let normalizedThumbnailKey;
+	const previousThumbnailKey = course.thumbnail_key;
 	if (thumbnail_key !== undefined) {
 		normalizedThumbnailKey = thumbnail_key.trim();
 		if (normalizedThumbnailKey) {
@@ -93,8 +102,77 @@ export const updateCourse = async (courseId, { title, description, thumbnail_key
 	if (thumbnail_key !== undefined) course.thumbnail_key = normalizedThumbnailKey;
 	if (enrollment_type) course.enrollment_type = enrollment_type;
 
-	const updatedCourse = await course.save();
-	return updatedCourse;
+	let updatedCourse;
+	try {
+		updatedCourse = await course.save();
+	} catch (error) {
+		if (thumbnail_key !== undefined && normalizedThumbnailKey && normalizedThumbnailKey !== previousThumbnailKey) {
+			await deleteS3ObjectsBestEffort(
+				[normalizedThumbnailKey],
+				`course:${course._id}:thumbnail:database-update-failed`,
+			);
+		}
+		throw error;
+	}
+
+	if (thumbnail_key !== undefined && normalizedThumbnailKey) {
+		await markUploadAttachedBestEffort(
+			[normalizedThumbnailKey],
+			`course:${course._id}:thumbnail:attached`,
+		);
+	}
+	if (thumbnail_key !== undefined && previousThumbnailKey && previousThumbnailKey !== normalizedThumbnailKey) {
+		await deleteS3ObjectsBestEffort(
+			[previousThumbnailKey],
+			`course:${course._id}:thumbnail:replaced`,
+		);
+	}
+
+	let activatedEnrollmentCount = 0;
+	if (course.enrollment_type === "open") {
+		const pendingEnrollments = await Enrollment.find({
+			course_id: course._id,
+			status: "pending",
+		})
+			.select("_id user_id")
+			.lean();
+
+		if (pendingEnrollments.length > 0) {
+			const approvedAt = new Date();
+			const activationResult = await Enrollment.updateMany(
+				{
+					_id: { $in: pendingEnrollments.map((enrollment) => enrollment._id) },
+					status: "pending",
+				},
+				{
+					$set: {
+						status: "active",
+						approved_at: approvedAt,
+					},
+				},
+			);
+			activatedEnrollmentCount = activationResult.modifiedCount ?? 0;
+
+			await Promise.all(
+				pendingEnrollments.map((enrollment) =>
+					createNotificationBestEffort({
+						recipient_id: enrollment.user_id,
+						type: "enrollment",
+						title: "Yêu cầu đăng ký đã được chấp nhận",
+						message: `Khóa học "${course.title}" đã chuyển sang đăng ký mở. Bạn đã được ghi danh tự động.`,
+						link: `/course-detail?course_id=${course._id}`,
+						metadata: {
+							action: "start_learning",
+							course_id: course._id,
+							enrollment_id: enrollment._id,
+						},
+					}, `enrollment:${enrollment._id}:course-opened`),
+				),
+			);
+		}
+	}
+
+	return { course: updatedCourse, activatedEnrollmentCount };
 };
 
 

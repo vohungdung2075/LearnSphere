@@ -17,12 +17,12 @@ type CourseForm = {
   enrollment_type: EnrollmentType;
 };
 
-type SortMode = 'popular' | 'newest' | 'title';
+type SortMode = 'learning' | 'popular' | 'newest' | 'title';
 type EnrollmentFilter = 'all' | 'open' | 'approval_required';
 type StudentStatusFilter = 'all' | 'not_enrolled' | 'active' | 'pending';
 
-const sortOptions: Array<{ value: SortMode; label: string; icon: string }> = [
-  { value: 'popular', label: 'Phù hợp nhất', icon: 'stars' },
+const commonSortOptions: Array<{ value: SortMode; label: string; icon: string }> = [
+  { value: 'popular', label: 'Phổ biến nhất', icon: 'groups' },
   { value: 'newest', label: 'Mới nhất', icon: 'fiber_new' },
   { value: 'title', label: 'Tên A-Z', icon: 'sort_by_alpha' },
 ];
@@ -34,6 +34,17 @@ function getCourseHref(courseId: string) {
 export function CourseCatalogPage() {
   const user = getStoredUser();
   const navItems = useMemo(() => getRoleNav(user), [user]);
+  const defaultSortMode: SortMode = canStudy(user)
+    ? 'learning'
+    : user?.role === 'tutor' || user?.role === 'admin'
+      ? 'newest'
+      : 'popular';
+  const sortOptions = useMemo(
+    () => canStudy(user)
+      ? [{ value: 'learning' as const, label: 'Đang học trước', icon: 'play_circle' }, ...commonSortOptions]
+      : commonSortOptions,
+    [user?.role],
+  );
   const [courses, setCourses] = useState<Course[]>([]);
   const [enrollmentStatusByCourseId, setEnrollmentStatusByCourseId] = useState<Record<string, Enrollment['status']>>({});
   const [progressByCourseId, setProgressByCourseId] = useState<Record<string, CourseProgress>>({});
@@ -43,10 +54,11 @@ export function CourseCatalogPage() {
   const [isCreateCourseOpen, setIsCreateCourseOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [query, setQuery] = useState('');
-  const [sortMode, setSortMode] = useState<SortMode>('popular');
+  const [sortMode, setSortMode] = useState<SortMode>(defaultSortMode);
   const [enrollmentFilter, setEnrollmentFilter] = useState<EnrollmentFilter>('all');
   const [studentStatusFilter, setStudentStatusFilter] = useState<StudentStatusFilter>('all');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [popularCourseIndex, setPopularCourseIndex] = useState(0);
   const [form, setForm] = useState<CourseForm>({
     title: '',
     description: '',
@@ -133,6 +145,7 @@ export function CourseCatalogPage() {
       folder: 'thumbnails',
     });
     await api.uploadFileToS3(presigned.upload_url, file);
+    await api.confirmUpload(presigned.upload_session_id);
     await api.updateCourse(courseId, { thumbnail_key: presigned.file_key });
   }
 
@@ -247,22 +260,65 @@ export function CourseCatalogPage() {
     return [...filtered].sort((first, second) => {
       if (sortMode === 'title') return first.title.localeCompare(second.title, 'vi');
       if (sortMode === 'newest') return second._id.localeCompare(first._id);
-      const firstActive = enrollmentStatusByCourseId[first._id] === 'active' ? 1 : 0;
-      const secondActive = enrollmentStatusByCourseId[second._id] === 'active' ? 1 : 0;
-      return secondActive - firstActive || first.title.localeCompare(second.title, 'vi');
+      const byPopularity =
+        (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
+        second._id.localeCompare(first._id);
+      if (sortMode === 'popular') return byPopularity;
+
+      const getLearningPriority = (courseId: string) => {
+        const status = enrollmentStatusByCourseId[courseId];
+        if (status === 'active') return 0;
+        if (!status) return 1;
+        return 2;
+      };
+      return getLearningPriority(first._id) - getLearningPriority(second._id) || byPopularity;
     });
   }, [courses, enrollmentFilter, enrollmentStatusByCourseId, query, sortMode, studentStatusFilter, user]);
 
-  const featuredCourse = useMemo(
+  const popularCourses = useMemo(
     () =>
-      [...courses].sort((first, second) =>
-        (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
-        second._id.localeCompare(first._id),
-      )[0],
+      [...courses]
+        .sort(
+          (first, second) =>
+            (second.enrollment_count ?? 0) - (first.enrollment_count ?? 0) ||
+            second._id.localeCompare(first._id),
+        )
+        .slice(0, 5),
     [courses],
   );
-  const featuredImage = featuredCourse ? thumbnailUrls[featuredCourse._id] || heroImage : heroImage;
+  const popularCourse = popularCourses[popularCourseIndex];
   const activeCourseCount = Object.values(enrollmentStatusByCourseId).filter((status) => status === 'active').length;
+
+  useEffect(() => {
+    setPopularCourseIndex((current) => (current < popularCourses.length ? current : 0));
+  }, [popularCourses.length]);
+
+  useEffect(() => {
+    if (popularCourses.length <= 1) return undefined;
+    const timer = window.setTimeout(() => {
+      setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [popularCourseIndex, popularCourses.length]);
+
+  useEffect(() => {
+    popularCourses.forEach((course) => {
+      const imageUrl = thumbnailUrls[course._id];
+      if (imageUrl) {
+        const image = new Image();
+        image.src = imageUrl;
+      }
+    });
+  }, [popularCourses, thumbnailUrls]);
+
+  function showPreviousPopularCourse() {
+    setPopularCourseIndex((current) => (current - 1 + popularCourses.length) % popularCourses.length);
+  }
+
+  function showNextPopularCourse() {
+    setPopularCourseIndex((current) => (current + 1) % popularCourses.length);
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-[#0d131f] text-[#dde2f4] selection:bg-[#4a8eff] selection:text-[#00285b]">
@@ -368,28 +424,43 @@ export function CourseCatalogPage() {
 
       <main className="w-full flex-grow pb-24 md:pl-64">
         <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8">
-          <section className="relative overflow-hidden rounded-xl border border-white/5 bg-[#242a37] shadow-card">
-            <div className="absolute inset-0 z-0 bg-cover bg-center transition-transform duration-700" style={{ backgroundImage: `url(${featuredImage})` }} />
+          <section className="relative min-h-[280px] overflow-hidden rounded-xl border border-white/5 bg-[#242a37] shadow-card md:min-h-[320px]">
+            {(popularCourses.length > 0 ? popularCourses : [null]).map((course, index) => {
+              const isActive = index === popularCourseIndex;
+              const imageUrl = course ? thumbnailUrls[course._id] || heroImage : heroImage;
+
+              return (
+                <div
+                  key={course?._id ?? 'course-placeholder'}
+                  className={`course-hero-backdrop absolute inset-0 z-0 bg-cover bg-center ${isActive ? 'is-active' : ''}`}
+                  style={{ backgroundImage: `url(${imageUrl})` }}
+                  aria-hidden={!isActive}
+                />
+              );
+            })}
             <div className="absolute inset-0 z-10 bg-[linear-gradient(90deg,#0d131f_0%,rgba(13,19,31,0.88)_42%,rgba(13,19,31,0.18)_100%)]" />
-            <div className="relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10">
+            <div
+              key={popularCourse?._id ?? 'course-placeholder-content'}
+              className="course-hero-content relative z-20 flex min-h-[280px] max-w-2xl flex-col justify-center px-6 py-8 md:min-h-[320px] md:px-10"
+            >
               <span className="mb-4 inline-flex w-fit items-center gap-1 rounded-full border border-[#24dfba]/20 bg-[#24dfba]/10 px-3 py-1 font-mono text-[12px] font-bold text-[#24dfba]">
                 <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: '"FILL" 1' }}>star</span>
-                KHÓA HỌC NỔI BẬT
+                KHÓA HỌC PHỔ BIẾN
               </span>
               <h1 className="text-[32px] font-bold leading-tight text-[#dde2f4] md:text-[46px]">
-                {featuredCourse?.title ?? 'Khám phá khóa học trong LearnSphere'}
+                {popularCourse?.title ?? 'Khám phá khóa học trong LearnSphere'}
               </h1>
               <p className="mt-4 line-clamp-2 text-[15px] leading-7 text-[#c1c6d7] md:text-[17px]">
-                {featuredCourse?.description ?? 'Tìm khóa học phù hợp, đăng ký học và tiếp tục lộ trình của bạn trên một giao diện trực quan hơn.'}
+                {popularCourse?.description ?? 'Tìm khóa học phù hợp, đăng ký học và tiếp tục lộ trình của bạn trên một giao diện trực quan hơn.'}
               </p>
               <div className="mt-7 flex flex-wrap items-center gap-4">
-                {featuredCourse ? (
+                {popularCourse ? (
                   <button
                     className="inline-flex items-center gap-2 rounded-lg bg-[#adc7ff] px-6 py-3 font-mono text-[13px] font-bold text-[#002e68] transition hover:shadow-[0_0_24px_rgba(173,199,255,0.35)] active:scale-95"
                     type="button"
-                    onClick={() => handleCourseAction(featuredCourse)}
+                    onClick={() => handleCourseAction(popularCourse)}
                   >
-                    {canStudy(user) ? getStudentAction(featuredCourse).label : 'Xem khóa học'}
+                    {canStudy(user) ? getStudentAction(popularCourse).label : 'Xem khóa học'}
                     <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
                   </button>
                 ) : null}
@@ -397,14 +468,48 @@ export function CourseCatalogPage() {
                   <span className="material-symbols-outlined text-[18px]">school</span>
                   <span className="font-mono text-[12px]">{courses.length} khóa học hiện có</span>
                 </div>
-                {featuredCourse && (
+                {popularCourse && (
                   <div className="flex items-center gap-2 text-[#24dfba]">
                     <span className="material-symbols-outlined text-[18px]">group</span>
-                    <span className="font-mono text-[12px]">{featuredCourse.enrollment_count ?? 0} người học</span>
+                    <span className="font-mono text-[12px]">{popularCourse.enrollment_count ?? 0} người đang học</span>
                   </div>
                 )}
               </div>
             </div>
+            {popularCourses.length > 1 && (
+              <div className="absolute bottom-5 right-5 z-30 flex items-center gap-2 rounded-full border border-white/10 bg-[#07101a]/70 px-2 py-1.5 shadow-lg backdrop-blur-md">
+                <button
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/75 transition hover:bg-white/10 hover:text-white"
+                  type="button"
+                  aria-label="Xem khóa học phổ biến trước"
+                  onClick={showPreviousPopularCourse}
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_left</span>
+                </button>
+                <div className="flex items-center gap-1.5" aria-label={`Khóa học phổ biến ${popularCourseIndex + 1} trên ${popularCourses.length}`}>
+                  {popularCourses.map((course, index) => (
+                    <button
+                      key={course._id}
+                      className={`h-2 rounded-full transition-all ${
+                        index === popularCourseIndex ? 'w-6 bg-[#24dfba]' : 'w-2 bg-white/35 hover:bg-white/60'
+                      }`}
+                      type="button"
+                      aria-label={`Xem ${course.title}`}
+                      aria-current={index === popularCourseIndex ? 'true' : undefined}
+                      onClick={() => setPopularCourseIndex(index)}
+                    />
+                  ))}
+                </div>
+                <button
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full text-white/75 transition hover:bg-white/10 hover:text-white"
+                  type="button"
+                  aria-label="Xem khóa học phổ biến tiếp theo"
+                  onClick={showNextPopularCourse}
+                >
+                  <span className="material-symbols-outlined text-[20px]">chevron_right</span>
+                </button>
+              </div>
+            )}
           </section>
 
           <AppToast message={message} tone={message.startsWith('Đang ') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
@@ -436,41 +541,63 @@ export function CourseCatalogPage() {
                   )}
                 </div>
 
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
-                  <button
-                    className={`inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-mono text-[12px] font-bold transition active:scale-95 ${
-                      isFilterOpen
-                        ? 'border-[#ffc080]/50 bg-[#ffc080]/10 text-[#ffc080]'
-                        : 'border-[#adc7ff]/50 bg-[#161c28] text-[#adc7ff] hover:bg-[#adc7ff]/10'
-                    }`}
-                    type="button"
-                    aria-expanded={isFilterOpen}
-                    onClick={() => setIsFilterOpen((current) => !current)}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">filter_list</span>
-                    Bộ lọc
-                  </button>
-                  <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/5 bg-[#161c28] p-1.5">
-                    <span className="px-2 font-mono text-[12px] text-[#8b90a0]">Sắp xếp:</span>
-                    {sortOptions.map((item) => {
-                      const isSelected = sortMode === item.value;
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <label className="flex min-h-11 w-full items-center gap-2 rounded-xl border border-[#354055] bg-[#080e1a] px-4 text-[#adc7ff] transition focus-within:border-[#adc7ff] focus-within:ring-2 focus-within:ring-[#adc7ff]/15 xl:max-w-md">
+                    <span className="material-symbols-outlined text-[20px]">search</span>
+                    <input
+                      className="min-w-0 flex-1 bg-transparent text-[14px] text-[#dde2f4] outline-none placeholder:text-[#78839a]"
+                      placeholder="Tìm theo tên hoặc mô tả khóa học..."
+                      value={query}
+                      onChange={(event) => setQuery(event.target.value)}
+                    />
+                    {query && (
+                      <button
+                        className="rounded-full p-1 text-[#8b90a0] transition hover:bg-[#242a37] hover:text-[#dde2f4]"
+                        type="button"
+                        aria-label="Xóa từ khóa tìm kiếm"
+                        onClick={() => setQuery('')}
+                      >
+                        <span className="material-symbols-outlined block text-[17px]">close</span>
+                      </button>
+                    )}
+                  </label>
 
-                      return (
-                        <button
-                          key={item.value}
-                          className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-bold transition active:scale-95 ${
-                            isSelected
-                              ? 'bg-[#adc7ff] text-[#002e68] shadow-lg shadow-[#adc7ff]/10'
-                              : 'text-[#c1c6d7] hover:bg-[#242a37] hover:text-[#dde2f4]'
-                          }`}
-                          type="button"
-                          onClick={() => setSortMode(item.value)}
-                        >
-                          <span className="material-symbols-outlined text-[16px]">{isSelected ? 'check_circle' : item.icon}</span>
-                          {item.label}
-                        </button>
-                      );
-                    })}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <button
+                      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 font-mono text-[12px] font-bold transition active:scale-95 ${
+                        isFilterOpen
+                          ? 'border-[#ffc080]/50 bg-[#ffc080]/10 text-[#ffc080]'
+                          : 'border-[#adc7ff]/50 bg-[#161c28] text-[#adc7ff] hover:bg-[#adc7ff]/10'
+                      }`}
+                      type="button"
+                      aria-expanded={isFilterOpen}
+                      onClick={() => setIsFilterOpen((current) => !current)}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">filter_list</span>
+                      Bộ lọc
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-white/5 bg-[#161c28] p-1.5">
+                      <span className="px-2 font-mono text-[12px] text-[#8b90a0]">Sắp xếp:</span>
+                      {sortOptions.map((item) => {
+                        const isSelected = sortMode === item.value;
+
+                        return (
+                          <button
+                            key={item.value}
+                            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-bold transition active:scale-95 ${
+                              isSelected
+                                ? 'bg-[#adc7ff] text-[#002e68] shadow-lg shadow-[#adc7ff]/10'
+                                : 'text-[#c1c6d7] hover:bg-[#242a37] hover:text-[#dde2f4]'
+                            }`}
+                            type="button"
+                            onClick={() => setSortMode(item.value)}
+                          >
+                            <span className="material-symbols-outlined text-[16px]">{isSelected ? 'check_circle' : item.icon}</span>
+                            {item.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -484,11 +611,6 @@ export function CourseCatalogPage() {
                     </button>
                   </div>
                   <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-                    <label className="block space-y-1.5">
-                      <span className="font-mono text-[11px] uppercase tracking-wide text-[#8b90a0]">Tìm kiếm</span>
-                      <input className="h-9 w-full rounded-full border border-[#414754] bg-[#080e1a] px-4 text-[13px] text-[#dde2f4] outline-none placeholder:text-[#8b90a0] focus:border-[#adc7ff]" placeholder="Tìm khóa học..." value={query} onChange={(event) => setQuery(event.target.value)} />
-                    </label>
-
                     <div>
                       <p className="mb-2.5 font-mono text-[11px] uppercase tracking-wide text-[#8b90a0]">Kiểu đăng ký</p>
                       <div className="space-y-2.5">
@@ -538,7 +660,7 @@ export function CourseCatalogPage() {
                         setQuery('');
                         setEnrollmentFilter('all');
                         setStudentStatusFilter('all');
-                        setSortMode('popular');
+                        setSortMode(defaultSortMode);
                         setIsFilterOpen(false);
                       }}
                     >
@@ -605,7 +727,7 @@ export function CourseCatalogPage() {
                           {enrollmentType}
                         </span>
 
-                        {(canManageCourse || canModerate) && (
+                        {canManageCourse && (
                           <label className="absolute right-4 top-4 z-20 flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-[#07101a]/80 px-3 py-1.5 font-mono text-[11px] font-bold text-[#dbe7ff] opacity-0 shadow-lg shadow-black/20 backdrop-blur-md transition hover:border-[#adc7ff]/50 hover:bg-[#13223a]/90 group-hover:opacity-100 group-focus-within:opacity-100">
                             <span className="material-symbols-outlined text-[15px]">upload</span>
                             Đổi ảnh
@@ -659,8 +781,8 @@ export function CourseCatalogPage() {
                           <div className="min-w-0 space-y-1 font-mono text-[11px] text-white/65">
                             <p className="truncate">Người tạo: {creator}</p>
                             <p className="flex items-center gap-1.5">
-                              <span className="material-symbols-outlined text-[16px]">timer</span>
-                              Nội dung tự học
+                              <span className="material-symbols-outlined text-[16px]">groups</span>
+                              {course.enrollment_count ?? 0} người đang học
                             </p>
                           </div>
                           <button

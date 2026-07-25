@@ -1,15 +1,17 @@
-import dotenv from "dotenv";
+import "dotenv/config";
 import mongoose from "mongoose"; 
 import app from "./app.js"; 
 import connectDB from "./config/database.js"; 
+import { validateProductionEnvironment } from "./config/environment.js";
 import { startCourseCleanupScheduler } from "./services/course-cleanup.service.js";
-
-dotenv.config(); 
+import { startUploadCleanupScheduler } from "./services/upload-cleanup.service.js";
 
 const PORT = process.env.PORT || 5000; 
 
+validateProductionEnvironment();
 await connectDB(); 
 startCourseCleanupScheduler();
+startUploadCleanupScheduler();
 
 const server = app.listen(PORT, () => {
 	console.log(`Server is running on port ${PORT}`); //

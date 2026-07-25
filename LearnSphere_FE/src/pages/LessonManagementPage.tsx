@@ -4,6 +4,7 @@ import { AppToast } from '../components/AppToast';
 import { CreateCourseModal } from '../components/CreateCourseModal';
 import { RoleSidebar } from '../components/RoleSidebar';
 import { SphereAIButton } from '../components/SphereAIButton';
+import { StudentLearningReportModal } from '../components/StudentLearningReportModal';
 import { canManageContent, canModerateCourse, getCourseOwnerId, getRoleLabel, getRoleNav, isCourseOwner } from '../lib/roleAccess';
 import {
   api,
@@ -14,6 +15,7 @@ import {
   type EnrollmentType,
   type Lesson,
   type Quiz,
+  type StudentLearningReport,
 } from '../services/api';
 
 const avatarSrc =
@@ -32,6 +34,8 @@ type LessonForm = {
   video_key: string;
   document_key: string;
 };
+
+type EnrollmentView = 'active' | 'pending';
 
 const emptyCourseForm: CourseForm = { title: '', description: '', enrollment_type: 'open' };
 const emptyLessonForm: LessonForm = { title: '', content: '', order_index: '1', video_key: '', document_key: '' };
@@ -87,6 +91,13 @@ export function LessonManagementPage() {
   const [lessons, setLessons] = useState<Lesson[]>([]);
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [pendingEnrollments, setPendingEnrollments] = useState<Enrollment[]>([]);
+  const [activeEnrollments, setActiveEnrollments] = useState<Enrollment[]>([]);
+  const [enrollmentView, setEnrollmentView] = useState<EnrollmentView>('active');
+  const [removingEnrollmentId, setRemovingEnrollmentId] = useState('');
+  const [isStudentReportOpen, setIsStudentReportOpen] = useState(false);
+  const [isStudentReportLoading, setIsStudentReportLoading] = useState(false);
+  const [studentReport, setStudentReport] = useState<StudentLearningReport | null>(null);
+  const [studentReportError, setStudentReportError] = useState('');
   const [selectedQuizId, setSelectedQuizId] = useState('');
   const [courseForm, setCourseForm] = useState<CourseForm>(emptyCourseForm);
   const [lessonForm, setLessonForm] = useState<LessonForm>(emptyLessonForm);
@@ -108,7 +119,9 @@ export function LessonManagementPage() {
   const selectedCourse = useMemo(() => courses.find((course) => course._id === selectedCourseId), [courses, selectedCourseId]);
   const canEditSelectedCourse = selectedCourse ? isCourseOwner(user, selectedCourse) : false;
   const canModerateSelectedCourse = selectedCourse ? canModerateCourse(user, selectedCourse) : false;
+  const canViewSelectedCourseEnrollments = canEditSelectedCourse || canModerateSelectedCourse;
   const canManageQuiz = user?.role === 'tutor' && canEditSelectedCourse;
+  const displayedEnrollments = enrollmentView === 'active' ? activeEnrollments : pendingEnrollments;
 
   async function handleFileUpload(file: File, folder: 'thumbnails' | 'lessons/videos' | 'lessons/documents') {
     if (!selectedCourseId) {
@@ -118,8 +131,25 @@ export function LessonManagementPage() {
 
     setIsUploading(true);
     setMessage(`Đang tải file "${file.name}" lên S3...`);
+    let uploadSessionId = '';
 
     try {
+      if (folder === 'lessons/videos' && file.size >= 25 * 1024 * 1024) {
+        const multipart = await api.createMultipartUpload({
+          course_id: selectedCourseId,
+          file_name: file.name,
+          content_type: file.type,
+          file_size: file.size,
+          folder,
+        });
+        uploadSessionId = multipart.upload_session_id;
+        const key = await api.uploadMultipartFileToS3(multipart, file, (percent) => {
+          setMessage(`Đang tải video "${file.name}" theo từng phần... ${percent}%`);
+        });
+        setMessage(`Upload video "${file.name}" thành công!`);
+        return key;
+      }
+
       const presigned = await api.createPresignedUpload({
         course_id: selectedCourseId,
         file_name: file.name,
@@ -127,13 +157,16 @@ export function LessonManagementPage() {
         file_size: file.size,
         folder,
       });
+      uploadSessionId = presigned.upload_session_id;
 
       await api.uploadFileToS3(presigned.upload_url, file, (percent) => {
         setMessage(`Đang tải file "${file.name}" lên S3... ${percent}%`);
       });
+      await api.confirmUpload(presigned.upload_session_id);
       setMessage(`Upload file "${file.name}" thành công!`);
       return presigned.file_key;
     } catch (err) {
+      if (uploadSessionId) await api.abortUpload(uploadSessionId).catch(() => {});
       setMessage(err instanceof Error ? err.message : 'Upload file thất bại');
       return null;
     } finally {
@@ -182,6 +215,7 @@ export function LessonManagementPage() {
       setLessons([]);
       setQuizzes([]);
       setPendingEnrollments([]);
+      setActiveEnrollments([]);
       return;
     }
 
@@ -198,21 +232,29 @@ export function LessonManagementPage() {
       setLessons([]);
       setQuizzes([]);
       setPendingEnrollments([]);
+      setActiveEnrollments([]);
       setMessage(err instanceof Error ? err.message : 'Không thể tải thành phần khóa học');
     }
   }
 
-  async function loadPendingEnrollments(courseId: string) {
-    if (!courseId || selectedCourse?.enrollment_type !== 'approval_required' || !canEditSelectedCourse) {
+  async function loadEnrollments(courseId: string) {
+    if (!courseId || !canViewSelectedCourseEnrollments) {
       setPendingEnrollments([]);
+      setActiveEnrollments([]);
       return;
     }
 
     try {
-      setPendingEnrollments(await api.getCourseEnrollments(courseId, 'pending'));
+      const [activeItems, pendingItems] = await Promise.all([
+        api.getCourseEnrollments(courseId, 'active'),
+        api.getCourseEnrollments(courseId, 'pending'),
+      ]);
+      setActiveEnrollments(activeItems);
+      setPendingEnrollments(pendingItems);
     } catch (err) {
       setPendingEnrollments([]);
-      setMessage(err instanceof Error ? err.message : 'Không thể tải danh sách enrollment chờ duyệt');
+      setActiveEnrollments([]);
+      setMessage(err instanceof Error ? err.message : 'Không thể tải danh sách học viên');
     }
   }
 
@@ -226,14 +268,17 @@ export function LessonManagementPage() {
     setLessonForm({ ...emptyLessonForm, order_index: String(lessons.length + 1 || 1) });
     setEditingLessonId('');
     setIsLessonEditorOpen(false);
+    setIsStudentReportOpen(false);
+    setStudentReport(null);
+    setStudentReportError('');
     void loadCourseParts(selectedCourseId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCourseId]);
 
   useEffect(() => {
-    void loadPendingEnrollments(selectedCourseId);
+    void loadEnrollments(selectedCourseId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedCourseId, selectedCourse?.enrollment_type, canEditSelectedCourse]);
+  }, [selectedCourseId, selectedCourse?.enrollment_type, canViewSelectedCourseEnrollments]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -372,24 +417,68 @@ export function LessonManagementPage() {
     try {
       const result = await api.approveEnrollment(selectedCourseId, enrollmentId);
       setMessage(result.message);
-      await loadPendingEnrollments(selectedCourseId);
+      await loadEnrollments(selectedCourseId);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể duyệt enrollment');
     }
   }
 
-  async function handleRejectEnrollment(enrollmentId: string) {
+  async function handleRemovePendingEnrollment(enrollmentId: string) {
     if (!selectedCourseId) return;
     const confirmed = window.confirm('Từ chối yêu cầu đăng ký khóa học này?');
     if (!confirmed) return;
 
     try {
-      const result = await api.rejectEnrollment(selectedCourseId, enrollmentId);
+      const result = await api.removeEnrollment(selectedCourseId, enrollmentId);
       setMessage(result.message);
-      await loadPendingEnrollments(selectedCourseId);
+      await loadEnrollments(selectedCourseId);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Không thể từ chối enrollment');
     }
+  }
+
+  async function handleRemoveActiveEnrollment(enrollmentId: string) {
+    if (!selectedCourseId || !canEditSelectedCourse) return;
+    const confirmed = window.confirm(
+      'Xóa học viên này khỏi khóa học? Học viên sẽ mất quyền truy cập nhưng lịch sử học và quiz vẫn được giữ.',
+    );
+    if (!confirmed) return;
+
+    setRemovingEnrollmentId(enrollmentId);
+    try {
+      const result = await api.removeEnrollment(selectedCourseId, enrollmentId);
+      setMessage(result.message);
+      await Promise.all([
+        loadEnrollments(selectedCourseId),
+        loadCourses(selectedCourseId),
+      ]);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Không thể xóa học viên khỏi khóa học');
+    } finally {
+      setRemovingEnrollmentId('');
+    }
+  }
+
+  async function openStudentLearningReport(enrollment: Enrollment) {
+    if (!selectedCourseId || enrollment.status !== 'active') return;
+
+    setIsStudentReportOpen(true);
+    setIsStudentReportLoading(true);
+    setStudentReport(null);
+    setStudentReportError('');
+    try {
+      const report = await api.getStudentLearningReport(selectedCourseId, enrollment._id);
+      setStudentReport(report);
+    } catch (err) {
+      setStudentReportError(err instanceof Error ? err.message : 'Không thể tải tiến độ học tập của học viên');
+    } finally {
+      setIsStudentReportLoading(false);
+    }
+  }
+
+  function closeStudentLearningReport() {
+    setIsStudentReportOpen(false);
+    setStudentReportError('');
   }
 
   if (!canManageContent(user)) {
@@ -411,6 +500,13 @@ export function LessonManagementPage() {
     <div className="min-h-screen bg-[#070d19] text-[#e7ecff]">
       <AppHeader user={user} roleLabel={getRoleLabel(user?.role)} avatarSrc={avatarSrc} />
       <AppToast message={message} tone={message.startsWith('Đang ') ? 'loading' : 'warning'} onClose={() => setMessage('')} />
+      <StudentLearningReportModal
+        isOpen={isStudentReportOpen}
+        isLoading={isStudentReportLoading}
+        report={studentReport}
+        error={studentReportError}
+        onClose={closeStudentLearningReport}
+      />
 
       {user?.role === 'tutor' && (
         <CreateCourseModal
@@ -773,37 +869,96 @@ export function LessonManagementPage() {
 
             {selectedCourse && (
               <>
-                {canEditSelectedCourse && selectedCourse.enrollment_type === 'approval_required' && pendingEnrollments.length > 0 && (
+                {canViewSelectedCourseEnrollments && (
                   <section className="overflow-hidden rounded-2xl border border-[#253047] bg-[#111827]/92 shadow-xl shadow-black/20">
-                    <div className="flex flex-col gap-2 border-b border-[#253047] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex flex-col gap-4 border-b border-[#253047] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
                       <div>
-                        <h2 className="text-[21px] font-extrabold">Duyệt enrollment</h2>
-                        <p className="mt-1 text-[14px] text-[#8f9bb3]">Yêu cầu đăng ký đang chờ duyệt cho khóa học này.</p>
+                        <h2 className="text-[21px] font-extrabold">Học viên trong khóa</h2>
+                        <p className="mt-1 text-[14px] text-[#8f9bb3]">
+                          {canEditSelectedCourse
+                            ? 'Theo dõi học viên đang học và xử lý các yêu cầu đăng ký.'
+                            : 'Admin đang xem danh sách học viên ở chế độ chỉ đọc.'}
+                        </p>
                       </div>
-                      <span className="rounded-full border border-[#ffc080]/30 bg-[#ffc080]/10 px-3 py-1 font-mono text-[12px] text-[#ffc080]">
-                        {pendingEnrollments.length} chờ duyệt
-                      </span>
+                      <div className="flex w-fit rounded-xl border border-[#354055] bg-[#070d19] p-1">
+                        <button
+                          className={`rounded-lg px-4 py-2 font-mono text-[12px] font-bold transition ${
+                            enrollmentView === 'active' ? 'bg-[#24dfba] text-[#00382c]' : 'text-[#9da8bd] hover:text-white'
+                          }`}
+                          type="button"
+                          onClick={() => setEnrollmentView('active')}
+                        >
+                          Đang học ({activeEnrollments.length})
+                        </button>
+                        <button
+                          className={`rounded-lg px-4 py-2 font-mono text-[12px] font-bold transition ${
+                            enrollmentView === 'pending' ? 'bg-[#ffc080] text-[#4b2800]' : 'text-[#9da8bd] hover:text-white'
+                          }`}
+                          type="button"
+                          onClick={() => setEnrollmentView('pending')}
+                        >
+                          Chờ duyệt ({pendingEnrollments.length})
+                        </button>
+                      </div>
                     </div>
 
-                    {!pendingEnrollments.length ? (
-                      <div className="p-8 text-center text-[#b8c1d6]">Chưa có enrollment nào cần duyệt.</div>
+                    {!displayedEnrollments.length ? (
+                      <div className="p-8 text-center text-[#b8c1d6]">
+                        {enrollmentView === 'active'
+                          ? 'Chưa có học viên nào đang học khóa này.'
+                          : 'Không có yêu cầu đăng ký nào đang chờ duyệt.'}
+                      </div>
                     ) : (
                       <div className="divide-y divide-[#253047]">
-                        {pendingEnrollments.map((enrollment) => (
+                        {displayedEnrollments.map((enrollment) => (
                           <article key={enrollment._id} className="flex flex-col gap-3 p-5 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <h3 className="text-[18px] font-bold">{getEnrollmentUserName(enrollment)}</h3>
+                            <div className="min-w-0">
+                              {enrollmentView === 'active' ? (
+                                <button
+                                  className="group/student inline-flex max-w-full items-center gap-2 text-left text-[18px] font-bold text-white outline-none transition hover:text-[#adc7ff] focus-visible:rounded focus-visible:ring-2 focus-visible:ring-[#adc7ff]/60"
+                                  type="button"
+                                  title="Xem tiến độ và kết quả quiz"
+                                  onClick={() => void openStudentLearningReport(enrollment)}
+                                >
+                                  <span className="truncate">{getEnrollmentUserName(enrollment)}</span>
+                                  <span className="material-symbols-outlined shrink-0 text-[18px] text-[#657188] transition group-hover/student:translate-x-0.5 group-hover/student:text-[#adc7ff]">
+                                    monitoring
+                                  </span>
+                                </button>
+                              ) : (
+                                <h3 className="text-[18px] font-bold">{getEnrollmentUserName(enrollment)}</h3>
+                              )}
                               <p className="mt-1 text-[14px] text-[#b8c1d6]">{getEnrollmentUserEmail(enrollment)}</p>
-                              <p className="mt-2 font-mono text-[12px] text-[#8f9bb3]">Trạng thái: chờ duyệt</p>
+                              <p className={`mt-2 font-mono text-[12px] ${enrollmentView === 'active' ? 'text-[#24dfba]' : 'text-[#ffc080]'}`}>
+                                Trạng thái: {enrollmentView === 'active' ? 'đang học' : 'chờ duyệt'}
+                              </p>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button className="rounded-xl bg-[#24dfba] px-4 py-2 font-mono text-[12px] font-black text-[#00382c]" type="button" onClick={() => void handleApproveEnrollment(enrollment._id)}>
-                                Duyệt
-                              </button>
-                              <button className="rounded-xl border border-[#ffb4ab]/40 px-4 py-2 font-mono text-[12px] font-bold text-[#ffb4ab] hover:bg-[#ffb4ab]/10" type="button" onClick={() => void handleRejectEnrollment(enrollment._id)}>
-                                Từ chối
-                              </button>
-                            </div>
+                            {canEditSelectedCourse ? (
+                              enrollmentView === 'pending' ? (
+                                <div className="flex flex-wrap gap-2">
+                                  <button className="rounded-xl bg-[#24dfba] px-4 py-2 font-mono text-[12px] font-black text-[#00382c]" type="button" onClick={() => void handleApproveEnrollment(enrollment._id)}>
+                                    Duyệt
+                                  </button>
+                                  <button className="rounded-xl border border-[#ffb4ab]/40 px-4 py-2 font-mono text-[12px] font-bold text-[#ffb4ab] hover:bg-[#ffb4ab]/10" type="button" onClick={() => void handleRemovePendingEnrollment(enrollment._id)}>
+                                    Từ chối
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#ffb4ab]/40 px-4 py-2 font-mono text-[12px] font-bold text-[#ffb4ab] transition hover:bg-[#ffb4ab]/10 disabled:cursor-wait disabled:opacity-60"
+                                  type="button"
+                                  disabled={removingEnrollmentId === enrollment._id}
+                                  onClick={() => void handleRemoveActiveEnrollment(enrollment._id)}
+                                >
+                                  <span className="material-symbols-outlined text-[17px]">person_remove</span>
+                                  {removingEnrollmentId === enrollment._id ? 'Đang xóa...' : 'Xóa khỏi khóa'}
+                                </button>
+                              )
+                            ) : (
+                              <span className="rounded-full border border-[#354055] px-3 py-1 font-mono text-[11px] text-[#8f9bb3]">
+                                Chỉ xem
+                              </span>
+                            )}
                           </article>
                         ))}
                       </div>
@@ -912,6 +1067,7 @@ export function LessonManagementPage() {
                               type="file"
                               accept="video/mp4,video/webm"
                               className="hidden"
+                              disabled={isUploading}
                               onChange={async (event) => {
                                 const file = event.target.files?.[0];
                                 if (file) {
@@ -934,6 +1090,7 @@ export function LessonManagementPage() {
                               type="file"
                               accept="application/pdf,.docx"
                               className="hidden"
+                              disabled={isUploading}
                               onChange={async (event) => {
                                 const file = event.target.files?.[0];
                                 if (file) {

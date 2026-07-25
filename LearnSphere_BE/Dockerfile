@@ -1,5 +1,5 @@
 # ─── Stage 1: Install dependencies ───────────────────────────────────────────
-FROM node:20-alpine AS deps
+FROM node:24-alpine AS deps
 
 WORKDIR /app
 
@@ -8,7 +8,7 @@ COPY package*.json ./
 RUN npm ci --only=production && npm cache clean --force
 
 # ─── Stage 2: Production image ────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 WORKDIR /app
 
@@ -35,7 +35,7 @@ ENV NODE_ENV=production \
 
 # Health check: AWS ECS/EC2 có thể dùng để monitor container
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:5000/ || exit 1
+  CMD wget -qO- http://localhost:5000/health/ready || exit 1
 
 # Khởi động server
 CMD ["node", "src/server.js"]

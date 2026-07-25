@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { clearSession } from '../services/api';
+import { api, clearSession } from '../services/api';
 
 type UserAvatarMenuProps = {
   name: string;
@@ -93,9 +93,13 @@ export function UserAvatarMenu({ name, role, avatarSrc }: UserAvatarMenuProps) {
             className="flex items-center px-4 py-2.5 text-[14px] text-[#ffb4ab] transition-colors hover:bg-[#2f3542]"
             href="/login"
             role="menuitem"
-            onClick={() => {
-              clearSession();
+            onClick={(event) => {
+              event.preventDefault();
               setIsOpen(false);
+              void api.logout().catch(() => {}).finally(() => {
+                clearSession();
+                window.location.assign('/login');
+              });
             }}
           >
             <span className="material-symbols-outlined mr-2 text-[20px]">logout</span>

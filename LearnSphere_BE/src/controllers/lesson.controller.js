@@ -137,6 +137,7 @@ export const handleIndexLessonForAI = async (req, res) => {
 		if (error.message === "FORBIDDEN_LESSON_ACTION") return res.status(403).json({ message: "Forbidden - Action denied" });
 		if (error.message === "LESSON_DOCUMENT_REQUIRED") return res.status(409).json({ message: "A document is required for AI indexing", code: error.message });
 		if (error.message === "AI_INDEX_IN_PROGRESS") return res.status(409).json({ message: "Lesson files are already being processed", code: error.message });
+		if (error.message === "AI_INDEX_SOURCE_CHANGED") return res.status(409).json({ message: "The lesson document changed while it was being processed", code: error.message });
 
 		console.error("Index lesson files for AI error:", error);
 		return res.status(500).json({ message: "Internal server error" });

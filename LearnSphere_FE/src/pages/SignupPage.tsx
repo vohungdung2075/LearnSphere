@@ -22,22 +22,13 @@ export function SignupPage() {
     try {
       const auth = await api.register(fullName, email, password, role);
 
-      if (!auth.access_token) {
+      if (auth.user.role === 'tutor' && auth.user.account_status === 'pending') {
         clearSession();
-
-        if (auth.user.role === 'tutor' && auth.user.account_status === 'pending') {
-          setPendingTutor(auth.user);
-          return;
-        }
-
-        throw new Error('Đăng ký thành công nhưng hệ thống không cấp phiên đăng nhập. Vui lòng đăng nhập lại.');
+        setPendingTutor(auth.user);
+        return;
       }
 
-      saveSession({
-        access_token: auth.access_token,
-        token_type: auth.token_type ?? 'bearer',
-        user: auth.user,
-      });
+      saveSession({ user: auth.user });
       window.location.assign('/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Không thể tạo tài khoản');
@@ -198,6 +189,7 @@ export function SignupPage() {
                     name="password"
                     placeholder="••••••••"
                     type={showPassword ? 'text' : 'password'}
+                    minLength={6}
                     required
                   />
                   <button

@@ -6,6 +6,7 @@ import Lesson from "../models/Lesson.model.js";
 import Quiz from "../models/Quiz.model.js";
 import QuizAttempt from "../models/QuizAttempt.model.js";
 import RequestMetric from "../models/RequestMetric.model.js";
+import RequestMetricUserDay from "../models/RequestMetricUserDay.model.js";
 import User from "../models/User.model.js";
 
 const S3_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -73,9 +74,47 @@ const getS3StorageStats = async () => {
 	}
 };
 
+export const getTutorDashboardStats = async (tutorId) => {
+	const courseIds = await Course.find({
+		created_by: tutorId,
+		is_deleted: false,
+	}).distinct("_id");
+
+	const [
+		totalLessons,
+		totalQuizzes,
+		pendingEnrollments,
+		activeStudentIds,
+	] = await Promise.all([
+		Lesson.countDocuments({ course_id: { $in: courseIds } }),
+		Quiz.countDocuments({ course_id: { $in: courseIds } }),
+		Enrollment.countDocuments({
+			course_id: { $in: courseIds },
+			status: "pending",
+		}),
+		Enrollment.distinct("user_id", {
+			course_id: { $in: courseIds },
+			status: "active",
+		}),
+	]);
+
+	return {
+		courses: courseIds.length,
+		total_lessons: totalLessons,
+		total_quizzes: totalQuizzes,
+		pending_enrollments: pendingEnrollments,
+		active_students: activeStudentIds.length,
+	};
+};
+
 export const getSystemStats = async () => {
 	const sevenDaysAgo = getDateKeyDaysAgo(6);
 	const today = getDateKeyDaysAgo(0);
+
+	await QuizAttempt.updateMany(
+		{ status: "in_progress", expires_at: { $lte: new Date() } },
+		{ $set: { status: "expired" } },
+	);
 
 	const [
 		usersByStatusRaw,
@@ -86,6 +125,8 @@ export const getSystemStats = async () => {
 		totalLessons,
 		totalQuizzes,
 		dailyMetrics,
+		dailyUniqueUsers,
+		uniqueUsers7d,
 		trafficTotals,
 		storage,
 	] = await Promise.all([
@@ -97,6 +138,15 @@ export const getSystemStats = async () => {
 		Lesson.countDocuments(),
 		Quiz.countDocuments(),
 		RequestMetric.find({ date: { $gte: sevenDaysAgo } }).sort({ date: 1 }).lean(),
+		RequestMetricUserDay.aggregate([
+			{ $match: { date: { $gte: sevenDaysAgo } } },
+			{ $group: { _id: "$date", count: { $sum: 1 } } },
+		]),
+		RequestMetricUserDay.aggregate([
+			{ $match: { date: { $gte: sevenDaysAgo } } },
+			{ $group: { _id: "$user_id" } },
+			{ $count: "count" },
+		]),
 		RequestMetric.aggregate([
 			{
 				$group: {
@@ -118,7 +168,7 @@ export const getSystemStats = async () => {
 	const deletedCourses = coursesByDeletedRaw.find((item) => item._id === true)?.count ?? 0;
 	const totals = trafficTotals[0] ?? { total_requests: 0, failed_requests: 0, total_duration_ms: 0 };
 	const todayMetric = dailyMetrics.find((item) => item.date === today);
-	const uniqueUsers = new Set(dailyMetrics.flatMap((item) => item.unique_user_ids.map(String)));
+	const dailyUniqueUserMap = new Map(dailyUniqueUsers.map((item) => [item._id, item.count]));
 
 	const dailyMap = new Map(dailyMetrics.map((item) => [item.date, item]));
 	const dailyRequests = Array.from({ length: 7 }, (_, index) => {
@@ -128,7 +178,7 @@ export const getSystemStats = async () => {
 			date,
 			requests: metric?.total_requests ?? 0,
 			failed_requests: metric?.failed_requests ?? 0,
-			unique_users: metric?.unique_user_ids.length ?? 0,
+			unique_users: dailyUniqueUserMap.get(date) ?? 0,
 		};
 	});
 
@@ -137,7 +187,7 @@ export const getSystemStats = async () => {
 		traffic: {
 			total_requests: totals.total_requests,
 			today_requests: todayMetric?.total_requests ?? 0,
-			unique_users_7d: uniqueUsers.size,
+			unique_users_7d: uniqueUsers7d[0]?.count ?? 0,
 			failed_requests: totals.failed_requests,
 			error_rate_percent: totals.total_requests
 				? Number(((totals.failed_requests / totals.total_requests) * 100).toFixed(2))

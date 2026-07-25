@@ -203,7 +203,7 @@ export function SystemMonitoringPage() {
                   </div>
                   <dl className="mt-7 space-y-3 text-[13px]">
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Đã dùng</dt><dd>{formatBytes(stats.storage.used_bytes)}</dd></div>
-                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Hạn mức cấu hình</dt><dd>{formatBytes(stats.storage.capacity_bytes)}</dd></div>
+                    <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Ngưỡng theo dõi</dt><dd>{formatBytes(stats.storage.capacity_bytes)}</dd></div>
                     <div className="flex justify-between gap-4"><dt className="text-[#8b90a0]">Số tệp lưu trữ</dt><dd>{stats.storage.object_count === null ? '—' : formatNumber(stats.storage.object_count)}</dd></div>
                   </dl>
                   {stats.storage.message && <p className="mt-5 rounded-lg bg-[#ffc080]/10 px-3 py-2 text-[11px] leading-5 text-[#ffc080]">{stats.storage.message}</p>}

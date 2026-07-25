@@ -46,6 +46,7 @@ export type Lesson = {
   order_index: number;
   ai_index_status?: 'not_indexed' | 'processing' | 'ready' | 'partial' | 'failed';
   ai_indexed_at?: string | null;
+  ai_index_started_at?: string | null;
   ai_index_error?: string;
 };
 
@@ -166,12 +167,24 @@ export type PresignedDownload = {
 };
 
 export type PresignedUpload = {
+  upload_session_id: string;
   upload_url: string;
   file_key: string;
   content_type: string;
   file_size: number;
   max_size_bytes: number;
   expires_in: number;
+};
+
+export type MultipartUpload = {
+  upload_session_id: string;
+  file_key: string;
+  content_type: string;
+  file_size: number;
+  part_size: number;
+  part_count: number;
+  expires_in: number;
+  parts: Array<{ part_number: number; upload_url: string }>;
 };
 
 export type QuizAttemptResult = {
@@ -194,6 +207,67 @@ export type QuizAttemptResult = {
     earned_point: number;
     max_point: number;
   }>;
+};
+
+export type StudentLearningReport = {
+  course: {
+    _id: string;
+    title: string;
+  };
+  student: {
+    _id: string;
+    full_name: string;
+    email: string;
+  };
+  enrollment: {
+    _id: string;
+    status: 'active';
+    requested_at?: string;
+    approved_at?: string | null;
+  };
+  lesson_progress: {
+    progress_percent: number;
+    completed_lessons: number;
+    total_lessons: number;
+    lessons: Array<{
+      lesson_id: string;
+      title: string;
+      order_index: number;
+      is_completed: boolean;
+      completed_at?: string | null;
+    }>;
+  };
+  quiz_progress: {
+    total_quizzes: number;
+    attempted_quizzes: number;
+    submitted_attempts: number;
+    average_score_percent: number;
+    best_score_percent: number;
+    attempts: Array<{
+      attempt_id: string;
+      quiz_id: string;
+      quiz_title: string;
+      difficulty?: QuizDifficulty | null;
+      status: 'in_progress' | 'submitted' | 'expired';
+      score: number;
+      total_score: number;
+      score_percent: number;
+      correct_answers: number;
+      total_questions: number;
+      started_at: string;
+      submitted_at?: string | null;
+      duration_seconds?: number | null;
+      answers: Array<{
+        question_id: string;
+        question_content: string;
+        selected_answers: Array<{ answer_id: string; content: string }>;
+        correct_answers: Array<{ answer_id: string; content: string }>;
+        is_correct: boolean;
+        earned_point: number;
+        max_point: number;
+      }>;
+    }>;
+  };
 };
 
 export type AdminUser = User & {
@@ -244,6 +318,14 @@ export type SystemStats = {
   };
 };
 
+export type TutorDashboardStats = {
+  courses: number;
+  total_lessons: number;
+  total_quizzes: number;
+  pending_enrollments: number;
+  active_students: number;
+};
+
 export type NotificationItem = {
   _id: string;
   recipient_id: string;
@@ -277,14 +359,10 @@ export type NotificationsResponse = {
 };
 
 type AuthResponse = {
-  access_token: string;
-  token_type: string;
   user: User;
 };
 
 type RegisterResponse = {
-  access_token: string | null;
-  token_type: string | null;
   user: User;
   message: string;
 };
@@ -292,6 +370,7 @@ type RegisterResponse = {
 type RequestOptions = Omit<RequestInit, 'body'> & {
   body?: unknown;
   auth?: boolean;
+  timeoutMs?: number;
 };
 
 export class ApiError extends Error {
@@ -317,23 +396,25 @@ export function getAIErrorMessage(error: unknown, fallback: string) {
   if (error.code === 'AI_THROTTLED') return 'Dịch vụ AI đã hết quota hoặc đang giới hạn lưu lượng. Vui lòng thử lại sau.';
   if (error.code === 'AI_DOCUMENT_NOT_INDEXED') return 'Backend không OCR được document của bài học. Hãy xem trạng thái học liệu và kiểm tra PDF có bị lỗi hoặc đặt mật khẩu hay không.';
   if (error.code === 'AI_SUMMARY_NOT_READY') return 'Giảng viên chưa tạo bản tóm tắt cho tài liệu này.';
+  if (error.code === 'AI_SUMMARY_IN_PROGRESS') return 'Một yêu cầu tóm tắt tài liệu này đang được xử lý. Vui lòng chờ hoàn tất.';
+  if (error.code === 'AI_SUMMARY_SOURCE_CHANGED') return 'Document đã thay đổi trong lúc tạo tóm tắt. Hãy chạy lại với file mới.';
   if (error.code === 'AI_INDEX_IN_PROGRESS') return 'AI đang xử lý file bài học. Vui lòng đợi hoàn tất rồi thử lại.';
+  if (error.code === 'AI_INDEX_SOURCE_CHANGED') return 'Document đã thay đổi trong lúc AI xử lý. Hãy chạy phân tích lại với file mới.';
   if (error.code === 'AI_FILES_NOT_INDEXED') return 'Giảng viên cần tóm tắt học liệu bằng AI ít nhất một lần trước khi học viên sử dụng.';
 	if (error.code === 'LESSON_DOCUMENT_REQUIRED') return 'Bài học cần có document để tạo bản tóm tắt.';
   if (error.code === 'AI_RATE_LIMITED') {
     return `Bạn đã gửi quá nhiều yêu cầu AI. Vui lòng thử lại sau ${error.retryAfterSeconds ?? 60} giây.`;
+  }
+  if (error.code === 'AI_RATE_LIMIT_UNAVAILABLE') {
+    return 'Hệ thống bảo vệ chi phí AI đang tạm thời không khả dụng. Vui lòng thử lại sau.';
   }
 
   return error.message || fallback;
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
-const TOKEN_KEY = 'learnsphere_access_token';
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const USER_KEY = 'learnsphere_user';
-
-export function getToken() {
-  return window.localStorage.getItem(TOKEN_KEY);
-}
 
 export function getStoredUser(): User | null {
   const value = window.localStorage.getItem(USER_KEY);
@@ -346,41 +427,55 @@ export function getStoredUser(): User | null {
   }
 }
 
-export function saveSession(auth: AuthResponse) {
-  window.localStorage.setItem(TOKEN_KEY, auth.access_token);
+export function saveSession(auth: Pick<AuthResponse, 'user'>) {
   window.localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
 }
 
 export function clearSession() {
-  window.localStorage.removeItem(TOKEN_KEY);
+  // Remove the legacy JS-readable token after migrating to HttpOnly cookies.
+  window.localStorage.removeItem('learnsphere_access_token');
   window.localStorage.removeItem(USER_KEY);
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const { auth = true, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, signal: externalSignal, ...fetchOptions } = options;
   const headers = new Headers(options.headers);
   const hasBody = options.body !== undefined;
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(externalSignal?.reason);
+  externalSignal?.addEventListener('abort', abortFromCaller, { once: true });
+  const timeoutId = timeoutMs > 0
+    ? window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), timeoutMs)
+    : undefined;
 
   if (hasBody && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
-  if (options.auth !== false) {
-    const token = getToken();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...fetchOptions,
+      headers,
+      credentials: 'include',
+      signal: controller.signal,
+      body: hasBody && !(options.body instanceof FormData) ? JSON.stringify(options.body) : (options.body as BodyInit | undefined),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      if (externalSignal?.aborted) throw error;
+      throw new ApiError('Yêu cầu mất quá nhiều thời gian. Vui lòng kiểm tra kết nối và thử lại.', 408, 'CLIENT_TIMEOUT');
     }
+    throw new ApiError('Không thể kết nối tới máy chủ. Vui lòng kiểm tra mạng và thử lại.', 0, 'NETWORK_ERROR');
+  } finally {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', abortFromCaller);
   }
-
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-    body: hasBody && !(options.body instanceof FormData) ? JSON.stringify(options.body) : (options.body as BodyInit | undefined),
-  });
 
   const contentType = response.headers.get('content-type') ?? '';
   const data = contentType.includes('application/json') ? await response.json() : null;
 
-  if (response.status === 401 && options.auth !== false) {
+  if (response.status === 401 && auth) {
     clearSession();
     window.dispatchEvent(new Event('learnsphere:unauthorized'));
   }
@@ -403,6 +498,13 @@ export const api = {
       method: 'POST',
       auth: false,
       body: { email, password },
+    });
+  },
+
+  logout() {
+    return request<{ message: string }>('/auth/logout', {
+      method: 'POST',
+      auth: false,
     });
   },
 
@@ -430,7 +532,7 @@ export const api = {
   },
 
   updateCourse(courseId: string, body: { title?: string; description?: string; thumbnail_key?: string; enrollment_type?: EnrollmentType }) {
-    return request<{ message: string; course: Course }>(`/courses/${courseId}`, {
+    return request<{ message: string; course: Course; activated_enrollment_count: number }>(`/courses/${courseId}`, {
       method: 'PUT',
       body,
     });
@@ -458,6 +560,7 @@ export const api = {
       message: string;
       course_id: string;
       deleted_s3_objects: number;
+      s3_cleanup_pending: boolean;
       deleted_records: Record<string, number>;
     }>(`/courses/${courseId}/permanent`, {
       method: 'DELETE',
@@ -488,14 +591,18 @@ export const api = {
     return request<Enrollment[]>(`/courses/${courseId}/enrollments?status=${status}`);
   },
 
+  getStudentLearningReport(courseId: string, enrollmentId: string) {
+    return request<StudentLearningReport>(`/courses/${courseId}/enrollments/${enrollmentId}/learning-report`);
+  },
+
   approveEnrollment(courseId: string, enrollmentId: string) {
     return request<{ message: string; enrollment: Enrollment }>(`/courses/${courseId}/enrollments/${enrollmentId}/approve`, {
       method: 'PATCH',
     });
   },
 
-  rejectEnrollment(courseId: string, enrollmentId: string) {
-    return request<{ message: string }>(`/courses/${courseId}/enrollments/${enrollmentId}`, {
+  removeEnrollment(courseId: string, enrollmentId: string) {
+    return request<{ message: string; removed_status: Enrollment['status'] }>(`/courses/${courseId}/enrollments/${enrollmentId}`, {
       method: 'DELETE',
     });
   },
@@ -529,11 +636,12 @@ export const api = {
   indexLessonForAI(lessonId: string) {
     return request<LessonAIIndexResult>(`/lessons/${lessonId}/ai-index`, {
       method: 'POST',
+      timeoutMs: 10 * 60_000,
     });
   },
 
   deleteLesson(lessonId: string) {
-    return request<{ message: string }>(`/lessons/${lessonId}`, {
+    return request<{ message: string; deleted_s3_objects: number; s3_cleanup_pending: boolean }>(`/lessons/${lessonId}`, {
       method: 'DELETE',
     });
   },
@@ -552,6 +660,7 @@ export const api = {
     return request<AIChatResponse>('/ai/chat', {
       method: 'POST',
       body,
+      timeoutMs: 3 * 60_000,
     });
   },
 
@@ -559,6 +668,7 @@ export const api = {
     return request<AISummaryResponse>(`/ai/summarize-lesson/${lessonId}`, {
       method: 'POST',
       body: { force_regenerate: forceRegenerate },
+      timeoutMs: 5 * 60_000,
     });
   },
 
@@ -566,6 +676,7 @@ export const api = {
     return request<AIGeneratedQuizResponse>('/ai/generate-quiz', {
       method: 'POST',
       body,
+      timeoutMs: 5 * 60_000,
     });
   },
 
@@ -682,6 +793,32 @@ export const api = {
     });
   },
 
+  confirmUpload(uploadSessionId: string) {
+    return request<{ upload_session_id: string; file_key: string; status: 'uploaded' }>(`/files/uploads/${uploadSessionId}/confirm`, {
+      method: 'POST',
+    });
+  },
+
+  abortUpload(uploadSessionId: string) {
+    return request<{ message: string }>(`/files/uploads/${uploadSessionId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  createMultipartUpload(body: { course_id: string; file_name: string; content_type: string; file_size: number; folder: 'lessons/videos' }) {
+    return request<MultipartUpload>('/files/multipart/start', {
+      method: 'POST',
+      body,
+    });
+  },
+
+  completeMultipartUpload(uploadSessionId: string, parts: Array<{ part_number: number; etag: string }>) {
+    return request<{ upload_session_id: string; file_key: string; status: 'uploaded' }>(`/files/multipart/${uploadSessionId}/complete`, {
+      method: 'POST',
+      body: { parts },
+    });
+  },
+
   createPresignedDownload(lessonId: string, targetType: 'video' | 'document') {
     return request<PresignedDownload>(`/files/presigned-download?lesson_id=${lessonId}&target_type=${targetType}`);
   },
@@ -690,6 +827,7 @@ export const api = {
     return new Promise<boolean>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', uploadUrl);
+      xhr.timeout = 5 * 60_000;
       xhr.setRequestHeader('Content-Type', file.type);
 
       xhr.upload.onprogress = (event) => {
@@ -699,6 +837,9 @@ export const api = {
 
       xhr.onerror = () => {
         reject(new Error('Không thể kết nối tới S3. Hãy kiểm tra CORS của bucket và kết nối mạng.'));
+      };
+      xhr.ontimeout = () => {
+        reject(new Error('Upload lên S3 hết thời gian chờ. Vui lòng kiểm tra mạng và tải lại.'));
       };
 
       xhr.onload = () => {
@@ -719,6 +860,93 @@ export const api = {
 
       xhr.send(file);
     });
+  },
+
+  async uploadMultipartFileToS3(
+    multipart: MultipartUpload,
+    file: File,
+    onProgress?: (percent: number) => void,
+  ) {
+    const uploadedByPart = new Array<number>(multipart.part_count).fill(0);
+    const completedParts = new Array<{ part_number: number; etag: string }>(multipart.part_count);
+    let nextPartIndex = 0;
+
+    const reportProgress = () => {
+      const uploaded = uploadedByPart.reduce((total, value) => total + value, 0);
+      onProgress?.(Math.min(100, Math.round((uploaded / file.size) * 100)));
+    };
+
+    const uploadPart = (partIndex: number) => {
+      const part = multipart.parts[partIndex];
+      const start = partIndex * multipart.part_size;
+      const end = Math.min(file.size, start + multipart.part_size);
+      const blob = file.slice(start, end);
+
+      return new Promise<string>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', part.upload_url);
+        xhr.timeout = 5 * 60_000;
+        xhr.upload.onprogress = (event) => {
+          if (!event.lengthComputable) return;
+          uploadedByPart[partIndex] = event.loaded;
+          reportProgress();
+        };
+        xhr.onerror = () => reject(new Error(`Mất kết nối khi tải phần ${part.part_number}.`));
+        xhr.ontimeout = () => reject(new Error(`Tải phần ${part.part_number} quá thời gian chờ.`));
+        xhr.onload = () => {
+          if (xhr.status < 200 || xhr.status >= 300) {
+            reject(new Error(`Upload phần ${part.part_number} thất bại (${xhr.status}).`));
+            return;
+          }
+          const etag = xhr.getResponseHeader('ETag');
+          if (!etag) {
+            reject(new Error('S3 không trả về ETag. Hãy thêm ETag vào ExposeHeaders trong bucket CORS.'));
+            return;
+          }
+          uploadedByPart[partIndex] = blob.size;
+          reportProgress();
+          resolve(etag);
+        };
+        xhr.send(blob);
+      });
+    };
+
+    const uploadPartWithRetry = async (partIndex: number) => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          return await uploadPart(partIndex);
+        } catch (error) {
+          lastError = error;
+          uploadedByPart[partIndex] = 0;
+          reportProgress();
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(`Upload phần ${partIndex + 1} thất bại.`);
+    };
+
+    const worker = async () => {
+      while (true) {
+        const partIndex = nextPartIndex;
+        nextPartIndex += 1;
+        if (partIndex >= multipart.part_count) return;
+        const etag = await uploadPartWithRetry(partIndex);
+        completedParts[partIndex] = {
+          part_number: multipart.parts[partIndex].part_number,
+          etag,
+        };
+      }
+    };
+
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, multipart.part_count) }, () => worker()));
+      await this.completeMultipartUpload(multipart.upload_session_id, completedParts);
+      onProgress?.(100);
+      return multipart.file_key;
+    } catch (error) {
+      await this.abortUpload(multipart.upload_session_id).catch(() => {});
+      throw error;
+    }
   },
 
   forgotPassword(email: string) {
@@ -769,6 +997,10 @@ export const api = {
 
   getSystemStats() {
     return request<SystemStats>('/stats');
+  },
+
+  getTutorDashboardStats() {
+    return request<TutorDashboardStats>('/stats/tutor-dashboard');
   },
 
   getNotifications(limit = 20) {

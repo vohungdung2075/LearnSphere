@@ -52,6 +52,7 @@ export function CreateCourseModal({ isOpen, onClose, onCreated, onMessage }: Pro
             folder: 'thumbnails',
           });
           await api.uploadFileToS3(presigned.upload_url, thumbnailFile);
+          await api.confirmUpload(presigned.upload_session_id);
           await api.updateCourse(courseId, { thumbnail_key: presigned.file_key });
         } catch {
           successMessage = 'Tạo khóa học thành công nhưng không thể tải thumbnail.';

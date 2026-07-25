@@ -1,7 +1,8 @@
 import mongoose from "mongoose";
 import User from "../models/User.model.js";
-import { validateOwnProfileAvatarKey } from "./file.service.js";
-import { createNotification } from "./notification.service.js";
+import { deleteS3ObjectsBestEffort, validateOwnProfileAvatarKey } from "./file.service.js";
+import { createNotificationBestEffort } from "./notification.service.js";
+import { markUploadAttachedBestEffort } from "./upload-cleanup.service.js";
 
 const allowedRoles = ["student", "tutor", "admin"];
 const allowedAccountStatuses = ["pending", "active", "blocked"];
@@ -35,7 +36,7 @@ export const updateAccountStatus = async (userId, accountStatus) => {
 	user.account_status = accountStatus;
 	await user.save();
 
-	await createNotification({
+	await createNotificationBestEffort({
 		recipient_id: user._id,
 		type: "account",
 		title: accountStatus === "active" ? "Tài khoản đã được kích hoạt" : "Tài khoản đã bị khóa",
@@ -44,7 +45,7 @@ export const updateAccountStatus = async (userId, accountStatus) => {
 			: "Tài khoản LearnSphere của bạn đã bị khóa bởi quản trị viên.",
 		link: "/profile",
 		metadata: { account_status: accountStatus },
-	});
+	}, `user:${user._id}:account-status:${accountStatus}`);
 
 	return {
 		id: user._id,
@@ -62,6 +63,8 @@ export const updateOwnProfile = async (userId, { full_name, avatar_key } = {}) =
 
 	const user = await User.findById(userId);
 	if (!user) throw new Error("USER_NOT_FOUND");
+	const previousAvatarKey = user.avatar_key;
+	let normalizedAvatarKey;
 
 	if (full_name !== undefined) {
 		if (typeof full_name !== "string") throw new Error("INVALID_FULL_NAME");
@@ -72,13 +75,38 @@ export const updateOwnProfile = async (userId, { full_name, avatar_key } = {}) =
 
 	if (avatar_key !== undefined) {
 		if (avatar_key === null || avatar_key === "") {
-			user.avatar_key = "";
+			normalizedAvatarKey = "";
 		} else {
-			user.avatar_key = await validateOwnProfileAvatarKey(user._id, avatar_key);
+			normalizedAvatarKey = await validateOwnProfileAvatarKey(user._id, avatar_key);
 		}
+		user.avatar_key = normalizedAvatarKey;
 	}
 
-	await user.save();
+	try {
+		await user.save();
+	} catch (error) {
+		if (avatar_key !== undefined && normalizedAvatarKey && normalizedAvatarKey !== previousAvatarKey) {
+			await deleteS3ObjectsBestEffort(
+				[normalizedAvatarKey],
+				`user:${user._id}:avatar:database-update-failed`,
+			);
+		}
+		throw error;
+	}
+
+	if (avatar_key !== undefined && normalizedAvatarKey) {
+		await markUploadAttachedBestEffort(
+			[normalizedAvatarKey],
+			`user:${user._id}:avatar:attached`,
+		);
+	}
+	if (avatar_key !== undefined && previousAvatarKey && previousAvatarKey !== normalizedAvatarKey) {
+		await deleteS3ObjectsBestEffort(
+			[previousAvatarKey],
+			`user:${user._id}:avatar:replaced-or-removed`,
+		);
+	}
+
 	return {
 		id: user._id,
 		full_name: user.full_name,

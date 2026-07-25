@@ -1,4 +1,5 @@
 import { login, signup, forgotPassword, resetPassword } from "../services/auth.service.js";
+import { clearAuthCookie, setAuthCookie } from "../utils/authCookie.js";
 
 export const handleSignup = async (req, res) => {
 	const { full_name, email, password, role } = req.body ?? {};
@@ -10,7 +11,9 @@ export const handleSignup = async (req, res) => {
 
 	try {
 		const result = await signup(full_name, email, password, role);
-		return res.status(201).json(result); 
+		const { access_token, ...response } = result;
+		if (access_token) setAuthCookie(res, access_token);
+		return res.status(201).json(response);
 
 	} catch (error) {
 		if (error.message === "EMAIL_ALREADY_EXISTS" || error.code === 11000) {
@@ -45,7 +48,9 @@ export const handleLogin = async (req, res) => {
 
 	try {
 		const result = await login(email, password);
-		return res.status(200).json(result);
+		const { access_token, ...response } = result;
+		setAuthCookie(res, access_token);
+		return res.status(200).json(response);
 
 	} catch (error) {
 		if (error.message === "USER_NOT_FOUND" || error.message === "INCORRECT_PASSWORD") {
@@ -67,6 +72,11 @@ export const handleLogin = async (req, res) => {
 		console.error("Login error:", error);
 		return res.status(500).json({ message: "Internal server error" });
 	}
+};
+
+export const handleLogout = async (req, res) => {
+	clearAuthCookie(res);
+	return res.status(200).json({ message: "Logged out successfully" });
 };
 
 
