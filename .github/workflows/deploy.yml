@@ -16,7 +16,7 @@ permissions:
 
 env:
   AWS_REGION: ap-southeast-1
-  ECR_REPOSITORY: learnsphere-be
+  ECR_REPOSITORY: learnsphere-be-2
 
 jobs:
   # ════════════════════════════════════════════════════════════
